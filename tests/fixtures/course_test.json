@@ -1,0 +1,24 @@
+{
+  "name": "Test Course",
+  "slug": "test",
+  "location": {
+    "address": "154 Tedesco Street, Marblehead, MA 01945",
+    "city": "Marblehead",
+    "state": "MA",
+    "country": "US",
+    "latitude": 42.4997,
+    "longitude": -70.8639
+  },
+  "holes": 18,
+  "par": 72,
+  "lidar": {
+    "bbox_buffer_km": 1.5,
+    "target_resolution_m": 1.0,
+    "epsg_output": 32619
+  },
+  "data_sources": {
+    "lidar": "USGS 3DEP",
+    "greens": "PuttView",
+    "imagery": "USGS/satellite"
+  }
+}

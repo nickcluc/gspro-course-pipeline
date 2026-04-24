@@ -1,0 +1,17 @@
+.venv/
+
+# Raw data — large files, not for version control
+courses/*/data/raw/
+
+# Processed outputs — regeneratable
+courses/*/data/processed/
+courses/*/output/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# macOS
+.DS_Store

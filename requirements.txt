@@ -1,0 +1,19 @@
+# LiDAR processing
+requests
+pyproj
+pytest
+rasterio
+numpy
+scipy
+
+# PuttView OCR (Stage 2)
+opencv-python
+pytesseract
+pillow
+
+# Mesh generation (Stage 4)
+trimesh
+
+# Note: PDAL must be installed separately via conda or system package manager
+# conda install -c conda-forge pdal python-pdal
+# GDAL is a PDAL dependency and installs with it

@@ -1,0 +1,24 @@
+{
+  "name": "Charles River Country Club",
+  "slug": "charles-river",
+  "location": {
+    "address": "483 Dedham Street, Newton Centre, MA 02459",
+    "city": "Newton",
+    "state": "MA",
+    "country": "US",
+    "latitude": 42.3069236,
+    "longitude": -71.1955084
+  },
+  "holes": 18,
+  "par": 72,
+  "lidar": {
+    "bbox_buffer_km": 1.5,
+    "target_resolution_m": 1.0,
+    "epsg_output": 32619
+  },
+  "data_sources": {
+    "lidar": "USGS 3DEP",
+    "greens": "PuttView",
+    "imagery": "NAIP"
+  }
+}
