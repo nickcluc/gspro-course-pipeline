@@ -15,7 +15,7 @@ A data-driven pipeline for building accurate golf courses for the GSPro simulato
 
 ## Courses
 
-- `courses/tedesco/` — Tedesco Country Club, Saugus MA
+- `courses/tedesco/` — Tedesco Country Club, Marblehead MA
 
 ## Adding a New Course
 
