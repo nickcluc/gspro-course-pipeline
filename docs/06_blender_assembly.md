@@ -12,7 +12,7 @@ Builds the whole course as one Blender scene, with no clicking:
 2. **Surfaces:** every Arccos shape (green, fairway, tee, bunker, water, trees) wrapped onto the terrain, one object per shape, named by hole: `h07_green`, `h12_bunker_03`
 3. **PuttView greens:** each Stage 04 green mesh turned and moved to best fit the Arccos outline of that green, then set to the terrain's height
 4. **Markers:** every tee and pin spot from `holes.json`
-5. **Cameras:** one per hole, behind the back tee looking at the green. With `--render`, a tee view and a top view of every hole are saved for checking.
+5. **Cameras:** one per hole, behind and above the back tee looking at the green. With `--render`, a tee view and a top view (tee at the bottom, green at the top) of every hole are saved for checking. Each render shows only that hole's shapes on the terrain, with tees as white discs and your pin spots as red discs. `--views top` renders only the top views.
 
 Each hole's objects go in a collection, `Hole 01` to `Hole 18`.
 

@@ -54,15 +54,16 @@ SURFACE_LIFT_M = 0.03     # surfaces sit just above the terrain so they show in 
 # Each surface type sits a little higher than the one under it, so overlaps don't flicker
 LAYER_STEP_M = 0.01
 LAYER_ORDER = ("fairway", "tee", "trees", "green", "bunker", "water")
-MARKER_HEIGHT_M = 1.5
-CAMERA_BACK_M = 25.0      # camera distance behind the tee
-CAMERA_UP_M = 8.0         # camera height above the tee
+CAMERA_BACK_M = 40.0      # camera distance behind the tee
+CAMERA_UP_M = 25.0        # camera height above the tee (a flyover-style view)
 
 # Display colours for QA (the OPCD scheme used in Stage 05's SVG)
 COLOURS = {
     "terrain": "#278438", "fairway": "#43E561", "tee": "#A0E5B8", "trees": "#164B20",
     "green": "#BCE5A4", "bunker": "#E5E5AA", "water": "#0000C0", "green_puttview": "#7FD67F",
+    "tee_marker": "#FFFFFF", "pin_marker": "#E03C31",
 }
+MARKER_RADIUS_M = {"tee": 2.0, "pin": 1.5}  # discs drawn so markers show in renders
 SURFACES = LAYER_ORDER
 
 
@@ -345,6 +346,8 @@ def plan_scene(slug: str, max_edge_m: float = 3.0) -> dict:
                 "look_at": (g["x"], g["z"], gz),
                 "top_centre": ((back[0] + g["x"]) / 2, (back[1] + g["z"]) / 2, max(back[2], gz)),
                 "top_span_m": d * 1.25,
+                # turn the top view so the hole runs up the image, tee at the bottom
+                "top_turn_rad": math.atan2(g["z"] - back[1], g["x"] - back[0]) - math.pi / 2,
             })
     plan["report"]["duplicate_shapes_skipped"] = duplicates
     plan["report"]["counts"] = {"surfaces": len(plan["surfaces"]), "puttview_greens": len(plan["greens"]),
@@ -413,7 +416,8 @@ def _surface_object(bpy, bmesh, spec, sampler_fn, max_edge, collection, material
     return obj
 
 
-def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "workbench") -> Path:
+def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "workbench",
+                views: tuple = ("tee", "top")) -> Path:
     import bpy  # first: bmesh and mathutils load with it
     import bmesh
     from mathutils import Vector
@@ -448,12 +452,16 @@ def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "work
             failed.append(spec["name"])
     for g in plan["greens"]:
         _mesh_object(bpy, g["name"], g["verts"], g["faces"], hole_col(g["hole"]), mats["green_puttview"])
+    drawn: list = []
     for m in plan["markers"]:
-        e = bpy.data.objects.new(m["name"], None)
-        e.empty_display_type = "SINGLE_ARROW" if m["kind"] == "tee" else "PLAIN_AXES"
-        e.empty_display_size = MARKER_HEIGHT_M
-        e.location = m["at"]
-        hole_col(m["hole"]).objects.link(e)
+        r = MARKER_RADIUS_M[m["kind"]]
+        x, y, z = m["at"]
+        # several tees often share one box: draw one disc per spot
+        if any(k == m["kind"] and math.dist((x, y), p) < 0.5 for k, p in drawn):
+            continue
+        drawn.append((m["kind"], (x, y)))
+        ring = [(x + r * math.cos(a), y + r * math.sin(a), z + 0.2) for a in np.linspace(0, 2 * math.pi, 16, endpoint=False)]
+        _mesh_object(bpy, m["name"], ring, [list(range(16))], hole_col(m["hole"]), mats[f"{m['kind']}_marker"])
 
     renders = paths["out"] / "renders"
     if engine == "cycles":  # CPU-only; for machines without a GPU / OpenGL
@@ -481,19 +489,30 @@ def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "work
         cam.data.clip_end = 5000
         hole_col(c["hole"]).objects.link(cam)
         if render:
+            # Renders show only this hole's shapes on the terrain, so neighbouring holes don't crowd them
+            for n, col in hole_cols.items():
+                col.hide_render = n != c["hole"]
+        if render and "tee" in views:
             renders.mkdir(parents=True, exist_ok=True)
             scene.camera = cam
             scene.render.filepath = str(renders / f"hole_{c['hole']:02d}_tee.png")
             bpy.ops.render.render(write_still=True)
+        if render and "top" in views:
+            renders.mkdir(parents=True, exist_ok=True)
             top = bpy.data.objects.new(f"{c['name']}_top", bpy.data.cameras.new(f"{c['name']}_top"))
             top.data.type = "ORTHO"
-            top.data.ortho_scale = c["top_span_m"]
+            top.data.ortho_scale = c["top_span_m"]  # covers the tall side of a portrait image
             top.data.clip_end = 5000
             top.location = (c["top_centre"][0], c["top_centre"][1], c["top_centre"][2] + 500)
+            top.rotation_euler = (0, 0, c["top_turn_rad"])
             hole_col(c["hole"]).objects.link(top)
             scene.camera = top
+            scene.render.resolution_x, scene.render.resolution_y = 900, 1600
             scene.render.filepath = str(renders / f"hole_{c['hole']:02d}_top.png")
             bpy.ops.render.render(write_still=True)
+            scene.render.resolution_x, scene.render.resolution_y = 1600, 900
+    for col in hole_cols.values():
+        col.hide_render = False
 
     report = dict(plan["report"], failed_surfaces=failed)
     (paths["out"] / "assembly_report.json").write_text(json.dumps(report, indent=2))
@@ -508,6 +527,7 @@ def main():
     parser.add_argument("--course", default="tedesco")
     parser.add_argument("--max-edge", type=float, default=3.0, help="longest surface edge in metres")
     parser.add_argument("--render", action="store_true", help="render a tee view and top view of each hole")
+    parser.add_argument("--views", default="tee,top", help="which renders: tee, top, or tee,top")
     parser.add_argument("--engine", choices=["workbench", "cycles"], default="workbench",
                         help="workbench is fast (needs a GPU); cycles works on CPU-only machines")
     parser.add_argument("--plan-only", action="store_true", help="check inputs and print the plan (no Blender)")
@@ -527,7 +547,7 @@ def main():
     except ImportError:
         print("ERROR: run this inside Blender: blender --background --python pipeline/06_blender_assembly.py -- --course <slug>")
         sys.exit(1)
-    blend = build_scene(args.course, plan, args.render, args.engine)
+    blend = build_scene(args.course, plan, args.render, args.engine, tuple(args.views.split(",")))
     print(f"  Saved {blend}")
 
 

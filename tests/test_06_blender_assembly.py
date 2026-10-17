@@ -191,6 +191,7 @@ class TestPlan:
         assert cam["at"][1] == pytest.approx(-230 - asm.CAMERA_BACK_M)
         assert cam["at"][2] == pytest.approx(plane(0, -230) + asm.CAMERA_UP_M)
         assert cam["look_at"][:2] == (0, 100)
+        assert cam["top_turn_rad"] == pytest.approx(0)  # hole runs north: no turn needed
 
     def test_missing_inputs_raise(self, course):
         (course / "output" / "layout" / "holes.json").unlink()
