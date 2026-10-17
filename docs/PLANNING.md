@@ -160,9 +160,9 @@ Stage 5: Course Layout (Arccos)
   Output: courses/tedesco/output/layout/ (holes.json, surfaces, OPCD SVG, height check)
 
 Stage 6: Blender Assembly (scripted via bpy)
-  Input:  All meshes + textures + layout
+  Input:  Terrain OBJ + green OBJs (Stage 4) + layout (Stage 5)
   Script: pipeline/06_blender_assembly.py
-  Output: courses/tedesco/output/tedesco.blend
+  Output: courses/tedesco/output/blender/tedesco.blend + per-hole QA renders
 
 Stage 7: GSPro Export
   Input:  Blender scene
@@ -262,5 +262,5 @@ Courses that have PuttView coverage get the full precision green treatment autom
 - [ ] Exact lat/lon coordinates for Tedesco (needed for LiDAR)
 - [ ] Does Tedesco have a drone policy? (useful for fairway contouring)
 - [ ] GSPro Course Forge exact file format requirements (need to research). Community guides describe the build as the OPCD toolset (Unity 2018.4.36f1, GreenKeeper V4, Tools → OPCD → Build Course); confirm whether "Course Forge" is that toolset or something else
-- [ ] Blender version compatibility with bpy scripting approach
+- [x] Blender version compatibility with bpy scripting approach — Stage 6 tested with Blender 5.2.2 (`pip install bpy`)
 - [ ] Surface property definitions for GSPro (what physics parameters are needed per surface type)

@@ -46,8 +46,14 @@ config/course.json
        │
        │  courses/<slug>/output/layout/
        │
+┌──────────────────────────┐
+│  06_blender_assembly.py  │  terrain + greens + layout → .blend + QA renders
+└──────────────────────────┘
+       │
+       │  courses/<slug>/output/blender/
+       │
        ▼
- 06 Blender assembly → 07 GSPro export (planned)
+ 07 GSPro export (planned)
 ```
 
 Stages 0, 1, 2 and 3 are independent and can run in any order. Stage 4 requires Stage 1 output and optionally uses Stage 2 output. Stage 5 requires Stage 0 output and uses Stage 1's terrain to frame its outputs.
@@ -78,6 +84,9 @@ python pipeline/04_mesh_gen.py --course tedesco
 
 # Stage 5: Course layout from Arccos (run after Stage 1 so the SVG lines up with the terrain)
 python pipeline/05_layout.py --course tedesco
+
+# Stage 6: Blender assembly (inside Blender; add --render for per-hole QA images)
+blender --background --python pipeline/06_blender_assembly.py -- --course tedesco --render
 ```
 
 ---

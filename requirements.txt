@@ -17,3 +17,5 @@ trimesh
 # Note: PDAL must be installed separately via conda or system package manager
 # conda install -c conda-forge pdal python-pdal
 # GDAL is a PDAL dependency and installs with it
+
+# Blender assembly (Stage 6): run inside Blender, or `pip install bpy` for Blender as a Python module
