@@ -14,7 +14,7 @@ A data-driven pipeline for building accurate golf courses for the GSPro simulato
 | 5 | `pipeline/05_layout.py` | Arccos maps + terrain | `holes.json`, surface outlines, OPCD SVG, height check |
 | 5b | `pipeline/05b_photo_surfaces.py` | Arccos maps + aerial photo | Missing bunkers, native grass, `extra_surfaces.geojson` |
 | 6 | `pipeline/06_blender_assembly.py` | Terrain + greens + layout | Blender scene + QA renders |
-| 7 | `pipeline/07_gspro_export.py` (planned) | Blender scene | GSPro course package |
+| 7 | `pipeline/07_opcd_package.py` | Terrain + layout + photo | OPCD inputs: Clender SVG, Unity heightmap, GreenKeeper sheet |
 
 ## Courses
 
