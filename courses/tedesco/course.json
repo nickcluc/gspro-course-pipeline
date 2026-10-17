@@ -19,6 +19,11 @@
   "data_sources": {
     "lidar": "USGS 3DEP",
     "greens": "PuttView",
-    "imagery": "USGS/satellite"
+    "imagery": "USGS/satellite",
+    "layout": "Arccos"
+  },
+  "arccos": {
+    "course_id": 6878,
+    "course_version": 4
   }
 }

@@ -1,6 +1,6 @@
 # Pipeline Overview
 
-This pipeline converts publicly available geospatial data and PuttView green maps into 3D course assets for GSPro Course Forge.
+This pipeline converts publicly available geospatial data, Arccos course maps and PuttView green maps into 3D course assets for GSPro Course Forge.
 
 ---
 
@@ -10,6 +10,12 @@ This pipeline converts publicly available geospatial data and PuttView green map
 config/course.json
        │
        ▼
+┌─────────────────────┐
+│  00_arccos.py       │  Arccos API → hole maps (+ your rounds)
+└─────────────────────┘
+       │
+       │  courses/<slug>/data/raw/arccos/holes/  +  rounds/
+       │
 ┌─────────────────────┐
 │  01_lidar.py        │  USGS TNM API → .laz tiles → PDAL → terrain.tif
 └─────────────────────┘
@@ -34,11 +40,17 @@ config/course.json
        │
        │  courses/<slug>/output/terrain/  +  output/greens/
        │
+┌─────────────────────┐
+│  05_layout.py       │  Arccos maps + terrain → holes.json, surfaces, OPCD SVG
+└─────────────────────┘
+       │
+       │  courses/<slug>/output/layout/
+       │
        ▼
- GSPro Course Forge
+ 06 Blender assembly → 07 GSPro export (planned)
 ```
 
-Stages 1, 2, and 3 are independent and can run in any order. Stage 4 requires Stage 1 output and optionally uses Stage 2 output.
+Stages 0, 1, 2 and 3 are independent and can run in any order. Stage 4 requires Stage 1 output and optionally uses Stage 2 output. Stage 5 requires Stage 0 output and uses Stage 1's terrain to frame its outputs.
 
 ---
 
@@ -48,6 +60,9 @@ Stages 1, 2, and 3 are independent and can run in any order. Stage 4 requires St
 # One-time environment setup
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+# Stage 0: Arccos hole maps and your rounds (needs an Arccos login; see docs/00_arccos.md)
+python pipeline/00_arccos.py --course tedesco --rounds
 
 # Stage 1: LiDAR terrain
 python pipeline/01_lidar.py --course tedesco
@@ -60,6 +75,9 @@ python pipeline/03_imagery.py --course tedesco
 
 # Stage 4: Mesh generation
 python pipeline/04_mesh_gen.py --course tedesco
+
+# Stage 5: Course layout from Arccos (run after Stage 1 so the SVG lines up with the terrain)
+python pipeline/05_layout.py --course tedesco
 ```
 
 ---
@@ -146,6 +164,7 @@ gspro-course-pipeline/
 | 1 – LiDAR | USGS 3DEP via TNM API | Free | None |
 | 2 – Greens | PuttView book (purchased) | ~$30–50/book | N/A |
 | 3 – Imagery | NAIP via Planetary Computer STAC | Free | None |
+| 0, 5 – Layout | Arccos course maps and your rounds | Arccos membership | Your Arccos login (personal builds only) |
 
 ---
 
@@ -155,7 +174,7 @@ gspro-course-pipeline/
 
 **Idempotent downloads** — all download functions skip files that already exist. Re-running after a partial failure is safe and won't re-download completed files.
 
-**No GUI operations** — every processing step is a Python script. Blender is used only for visual QA, scripted via the bpy API in Stage 5.
+**No GUI operations** — every processing step is a Python script. Blender is used only for visual QA, scripted via the bpy API in Stage 6.
 
 **Accuracy over speed** — green elevation data uses OCR of printed numeric values (not color approximation), and LiDAR terrain uses the highest-resolution available survey. These choices exist because physical accuracy in GSPro directly affects gameplay quality.
 

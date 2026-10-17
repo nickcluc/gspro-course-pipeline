@@ -6,12 +6,14 @@ A data-driven pipeline for building accurate golf courses for the GSPro simulato
 
 | Step | Script | Input | Output |
 |------|--------|-------|--------|
+| 0 | `pipeline/00_arccos.py` | Arccos login + course id | Hole maps, your rounds |
 | 1 | `pipeline/01_lidar.py` | USGS coordinates | Terrain heightmap |
 | 2 | `pipeline/02_puttview_ocr.py` | PuttView scans | Per-green elevation grids |
 | 3 | `pipeline/03_imagery.py` | Satellite imagery | Texture maps |
 | 4 | `pipeline/04_mesh_gen.py` | Heightmaps + grids | 3D meshes |
-| 5 | `pipeline/05_blender_assembly.py` | Meshes + textures | Blender scene |
-| 6 | `pipeline/06_gspro_export.py` | Blender scene | GSPro course package |
+| 5 | `pipeline/05_layout.py` | Arccos maps + terrain | `holes.json`, surface outlines, OPCD SVG, height check |
+| 6 | `pipeline/06_blender_assembly.py` (planned) | Meshes + textures + layout | Blender scene |
+| 7 | `pipeline/07_gspro_export.py` (planned) | Blender scene | GSPro course package |
 
 ## Courses
 
