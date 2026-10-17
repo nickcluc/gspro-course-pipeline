@@ -82,6 +82,6 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 17 bunkers missing from Arccos, including the fairway bunker left of hole 1 in front of the trees, and four around hole 2's green
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
-- 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 488 m² against Arccos's 268 m²
+- 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 436 m² against Arccos's 268 m²
 - 227 tree areas Arccos doesn't map, most on the back nine (25 on hole 16)
 - Runs in about 2½ minutes
