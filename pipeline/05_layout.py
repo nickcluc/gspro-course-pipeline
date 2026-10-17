@@ -85,6 +85,7 @@ def get_paths(slug: str) -> dict:
         "terrain": base / "data" / "processed" / "heightmaps" / f"{slug}_terrain.tif",
         "out": base / "output" / "layout",
         "extras": base / "extra_surfaces.geojson",
+        "grids": base / "data" / "processed" / "grids",
     }
 
 
@@ -210,6 +211,44 @@ def apply_photo_greens(surfaces: list[dict], photo_path: Path, project, replace:
                 surfaces[i] = dict(s, en=best["en"], lonlat=best["lonlat"], arccos_name=s["arccos_name"] + " (photo outline)")
                 n += 1
     return n
+
+
+def apply_puttview_greens(surfaces: list[dict], grids_dir: Path, epsg: int, enabled: bool) -> dict:
+    """
+    Swaps each hole's green for the outline from its PuttView page (Stage 02), placed by
+    green_fit: turned, flipped if needed and nudged until it best overlaps the map's green
+    (the photo outline when greens_from_photo is on). Returns {hole: fit}.
+    """
+    if not enabled or not grids_dir.exists():
+        return {}
+    import numpy as np
+
+    import green_fit
+    from pyproj import Transformer
+    to_ll = Transformer.from_crs(epsg, 4326, always_xy=True)
+    fits = {}
+    for i, s in enumerate(surfaces):
+        if s["surface"] != "green" or s.get("arccos_type") is None:
+            continue
+        page = grids_dir / f"hole_{s['hole']:02d}_green.json"
+        if not page.exists():
+            continue
+        book = json.loads(page.read_text()).get("outline_yards") or []
+        if len(book) < 3:
+            continue
+        book_m = np.array(book, float) * green_fit.YARD_M
+        if s["hole"] in fits and fits[s["hole"]].get("_en") == tuple(map(tuple, s["en"])):
+            fit = fits[s["hole"]]
+        else:
+            fit = green_fit.fit_outline(book_m, s["en"])
+            fit["_en"] = tuple(map(tuple, s["en"]))
+        en = [tuple(p) for p in green_fit.place(book_m, fit)]
+        surfaces[i] = dict(s, en=en, lonlat=[to_ll.transform(e, n) for e, n in en],
+                           arccos_name=s["arccos_name"] + " (PuttView outline)")
+        fits.setdefault(s["hole"], fit)
+    for f in fits.values():
+        f.pop("_en", None)
+    return fits
 
 
 def load_rounds(rounds_dir: Path) -> list[dict]:
@@ -524,6 +563,7 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     opts = cfg.get("layout") or {}
     photo_greens = apply_photo_greens(surfaces, paths["out"] / "photo_surfaces.geojson", project,
                                       bool(opts.get("greens_from_photo")))
+    book_fits = apply_puttview_greens(surfaces, paths["grids"], epsg, opts.get("greens_from_puttview", True))
     photo_stats = apply_photo_bunkers(surfaces, paths["out"] / "photo_surfaces.geojson", project,
                                       bool(opts.get("bunkers_from_photo")), bool(opts.get("drop_bunkers_without_sand")))
     extras, removals = load_extras(paths["extras"], project)
@@ -537,6 +577,11 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     rounds = load_rounds(paths["rounds"])
     pins = pins_by_hole(rounds, version, project, top_pins)
     hole_rows = build_holes(holes, surfaces, pins, to_local, tee_starts(rounds, version, project))
+    for row in hole_rows:
+        fit = book_fits.get(row["hole"])
+        if fit and row.get("green"):
+            cx, cz = to_local(*fit["centre"])
+            row["green"]["puttview_fit"] = dict(fit, centre=[round(cx, 3), round(cz, 3)])
 
     out = paths["out"]
     (out / "holes.json").write_text(json.dumps(
@@ -546,7 +591,7 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     write_svg(surfaces, frame, out / f"{slug}_surfaces_opcd.svg", f"{cfg.get('name')} from Arccos, EPSG:{epsg}")
 
     result = {"holes": len(hole_rows), "surfaces": len(surfaces), "extra_surfaces": len(extras),
-              "photo_bunkers": photo_stats, "photo_greens": photo_greens, "removed_by_corrections": removed,
+              "photo_bunkers": photo_stats, "photo_greens": photo_greens, "puttview_greens": len(book_fits), "removed_by_corrections": removed,
               "framed_to_terrain": bool(spatial),
               "pins": sum(len(h["pins"]) for h in hole_rows)}
     if spatial:
@@ -568,6 +613,8 @@ def main():
         print(f"  Removed {r['removed_by_corrections']} Arccos shapes per extra_surfaces.geojson")
     if r["photo_greens"]:
         print(f"  Arccos greens: {r['photo_greens']} given photo outlines")
+    if r["puttview_greens"]:
+        print(f"  Greens: {r['puttview_greens']} shaped from the PuttView pages (fits in holes.json)")
     if any(r["photo_bunkers"].values()):
         print(f"  Arccos bunkers: {r['photo_bunkers']['replaced']} given photo outlines, "
               f"{r['photo_bunkers']['dropped']} dropped (no sand in the photo)")

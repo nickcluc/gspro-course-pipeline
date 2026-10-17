@@ -196,6 +196,24 @@ class TestProcess:
         bunkers = [f for f in geo["features"] if f["properties"]["surface"] == "bunker"]
         assert len(bunkers) == 1  # the grass-only Arccos bunker is gone
 
+    def test_puttview_outline_replaces_green(self, course):
+        # PuttView page for hole 1: a 22 x 8 yd green (the Arccos one is 20 x 6 m), on its side
+        grids = course / "data" / "processed" / "grids"
+        grids.mkdir(parents=True)
+        (grids / "hole_01_green.json").write_text(json.dumps(
+            {"hole": 1, "outline_yards": [[0, 0], [8, 0], [8, 22], [0, 22]], "points": []}))
+        r = layout.process_layout("test")
+        assert r["puttview_greens"] == 1
+        h = json.loads((course / "output" / "layout" / "holes.json").read_text())["holes"][0]
+        fit = h["green"]["puttview_fit"]
+        assert fit["rotation_deg"] % 180 == pytest.approx(90, abs=4)
+        geo = json.loads((course / "output" / "layout" / "surfaces.geojson").read_text())
+        green = [f for f in geo["features"] if f["properties"]["surface"] == "green"][0]
+        from pyproj import Transformer
+        t = Transformer.from_crs(4326, 32619, always_xy=True)
+        pts = np.array([t.transform(x, y) for x, y in green["geometry"]["coordinates"][0]])
+        assert np.ptp(pts[:, 0]) == pytest.approx(22 * 0.9144, abs=0.3)  # east-west, like the Arccos green
+
     def test_photo_outlines_off_by_default(self, course):
         photo.process("test", overlays=False)
         assert layout.process_layout("test")["photo_bunkers"] == {"replaced": 0, "dropped": 0}

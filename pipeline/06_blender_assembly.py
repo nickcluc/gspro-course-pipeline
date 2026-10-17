@@ -289,13 +289,15 @@ def _turn(uv: np.ndarray, deg: float) -> np.ndarray:
 
 
 def place_green(obj_verts: np.ndarray, rotation_deg: float, pivot: tuple[float, float],
-                centre: tuple[float, float], base_height: float) -> np.ndarray:
+                centre: tuple[float, float], base_height: float, mirrored: bool = False) -> np.ndarray:
     """
     Stage 04 green OBJ (x, relative height, z = -grid y) -> Blender (east, north, elevation):
     turned by rotation_deg about `pivot`, moved so the pivot lands on `centre`, with the
     green's mean height set to base_height.
     """
     uv = np.column_stack([obj_verts[:, 0], -obj_verts[:, 2]]) - np.array(pivot)
+    if mirrored:  # the page is flipped relative to the map
+        uv = uv * np.array([1.0, -1.0])
     uv = _turn(uv, rotation_deg) + np.array(centre)
     z = obj_verts[:, 1] - obj_verts[:, 1].mean() + base_height
     return np.column_stack([uv, z])
@@ -370,15 +372,22 @@ def plan_scene(slug: str, max_edge_m: float = 3.0) -> dict:
         if obj.exists() and outlines.get(n):
             gv, gf = read_obj(obj)
             outline = max(outlines[n], key=len)
-            grid = paths["grids"] / f"hole_{n:02d}_green.json"
-            fit = fit_green(green_footprint(grid, gv), outline)
+            book = (h.get("green") or {}).get("puttview_fit")
+            if book:  # Stage 05 already shaped this green from its PuttView page
+                fit = {"rotation_deg": book["rotation_deg"], "pivot": book["pivot"], "centre": book["centre"],
+                       "mirrored": book.get("mirrored", False), "fit": book.get("iou")}
+                set_by = "PuttView outline (Stage 05)"
+            else:
+                grid = paths["grids"] / f"hole_{n:02d}_green.json"
+                fit = fit_green(green_footprint(grid, gv), outline)
+                set_by = "best fit"
             rotation = float(turns.get(n, fit["rotation_deg"]))
             base = float(np.mean([sampler.height(x, y) for x, y in outline]))
-            verts = place_green(gv, rotation, fit["pivot"], fit["centre"], base)
+            verts = place_green(gv, rotation, fit["pivot"], fit["centre"], base, fit.get("mirrored", False))
             plan["greens"].append({"name": f"h{n:02d}_green_puttview", "hole": n,
                                    "verts": verts.tolist(), "faces": gf})
-            rep.update(rotation_deg=rotation, rotation_set_by="course.json" if n in turns else "best fit",
-                       fit=fit["fit"])
+            rep.update(rotation_deg=rotation, rotation_set_by="course.json" if n in turns else set_by,
+                       mirrored=bool(fit.get("mirrored", False)), fit=fit["fit"])
         plan["report"]["holes"][n] = rep
 
         # Markers and camera

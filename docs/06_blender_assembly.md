@@ -83,6 +83,8 @@ Each outline is cut into triangles by ear clipping, which stays inside curved an
 
 ### Greens
 
+When Stage 05 has shaped a green from its PuttView page, the green mesh is placed with that same fit (`green.puttview_fit` in `holes.json`), so the mesh and the green's outline line up. Otherwise:
+
 PuttView pages aren't necessarily printed north-up. Each green is turned in 5° steps about its centre, which is placed on the Arccos green's centre, and the turn that puts the most PuttView grid points inside the Arccos outline is kept. The report gives that share as `fit`. Below 0.8, the stage prints a warning: check the green in Blender and set `green_rotation_deg` if needed. The green's height is set so its average matches the terrain under the Arccos outline.
 
 Stage 04's green mesh is filled out to a rectangle, so the fit uses the Stage 02 grid points (which only cover the green) when they're there.
