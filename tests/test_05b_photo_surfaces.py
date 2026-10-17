@@ -136,6 +136,21 @@ class TestProcess:
         geo = json.loads((course / "output" / "layout" / "surfaces.geojson").read_text())
         assert any(f["properties"]["surface"] == "native" for f in geo["features"])
 
+    def test_photo_outlines_replace_and_drop(self, course):
+        photo.process("test", overlays=False)
+        cfg = json.loads((course / "course.json").read_text())
+        cfg["layout"] = {"bunkers_from_photo": True, "drop_bunkers_without_sand": True}
+        (course / "course.json").write_text(json.dumps(cfg))
+        r = layout.process_layout("test")
+        assert r["photo_bunkers"] == {"replaced": 1, "dropped": 1}
+        geo = json.loads((course / "output" / "layout" / "surfaces.geojson").read_text())
+        bunkers = [f for f in geo["features"] if f["properties"]["surface"] == "bunker"]
+        assert len(bunkers) == 1  # the grass-only Arccos bunker is gone
+
+    def test_photo_outlines_off_by_default(self, course):
+        photo.process("test", overlays=False)
+        assert layout.process_layout("test")["photo_bunkers"] == {"replaced": 0, "dropped": 0}
+
     def test_overlays_written(self, course):
         photo.process("test")
         assert (course / "output" / "layout" / "photo_check" / "hole_01.jpg").exists()

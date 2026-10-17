@@ -114,6 +114,54 @@ def load_extras(path: Path, project) -> list[dict]:
     return out
 
 
+def _inside(x: float, y: float, poly: list) -> bool:
+    hit, j = False, len(poly) - 1
+    for i in range(len(poly)):
+        (xi, yi), (xj, yj) = poly[i], poly[j]
+        if (yi > y) != (yj > y) and x < xi + (y - yi) * (xj - xi) / (yj - yi):
+            hit = not hit
+        j = i
+    return hit
+
+
+def apply_photo_bunkers(surfaces: list[dict], photo_path: Path, project,
+                        replace: bool, drop_unseen: bool) -> dict:
+    """
+    Uses Stage 05b's findings on Arccos bunkers:
+      replace     — swap each Arccos bunker for the photo's outline of the same sand
+                    (Arccos outlines are often too small or a few metres off)
+      drop_unseen — remove Arccos bunkers where the photo shows only grass
+    A photo outline matches an Arccos bunker when either one's centre is inside the other.
+    """
+    stats = {"replaced": 0, "dropped": 0}
+    if not (replace or drop_unseen) or not photo_path.exists():
+        return stats
+    feats = json.loads(photo_path.read_text()).get("features") or []
+
+    def ring(f):
+        ll = [tuple(c[:2]) for c in f["geometry"]["coordinates"][0][:-1]]
+        return {"lonlat": ll, "en": [project(x, y) for x, y in ll]}
+
+    photo = [ring(f) for f in feats if f["properties"].get("finding") == "bunker_matches_arccos"]
+    unseen = [ring(f)["en"] for f in feats if f["properties"].get("finding") == "arccos_bunker_no_sand_seen"]
+    keep = []
+    for s in surfaces:
+        if s["surface"] == "bunker" and s.get("arccos_type") is not None:
+            c = centroid(s["en"])
+            if drop_unseen and any(_inside(*c, u) or _inside(*centroid(u), s["en"]) for u in unseen):
+                stats["dropped"] += 1
+                continue
+            if replace:
+                hits = [p for p in photo if _inside(*centroid(p["en"]), s["en"]) or _inside(*c, p["en"])]
+                if hits:
+                    best = max(hits, key=lambda p: len(p["en"]))
+                    s = dict(s, en=best["en"], lonlat=best["lonlat"], arccos_name=s["arccos_name"] + " (photo outline)")
+                    stats["replaced"] += 1
+        keep.append(s)
+    surfaces[:] = keep
+    return stats
+
+
 def load_rounds(rounds_dir: Path) -> list[dict]:
     return [json.loads(f.read_text()) for f in sorted(rounds_dir.glob("*.json"))] if rounds_dir.exists() else []
 
@@ -419,6 +467,9 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
 
     holes = load_holes(paths["holes"])
     surfaces = build_surfaces(holes, project)
+    opts = cfg.get("layout") or {}
+    photo_stats = apply_photo_bunkers(surfaces, paths["out"] / "photo_surfaces.geojson", project,
+                                      bool(opts.get("bunkers_from_photo")), bool(opts.get("drop_bunkers_without_sand")))
     extras = load_extras(paths["extras"], project)
     surfaces += extras
     frame = svg_frame(surfaces, spatial)
@@ -438,6 +489,7 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     write_svg(surfaces, frame, out / f"{slug}_surfaces_opcd.svg", f"{cfg.get('name')} from Arccos, EPSG:{epsg}")
 
     result = {"holes": len(hole_rows), "surfaces": len(surfaces), "extra_surfaces": len(extras),
+              "photo_bunkers": photo_stats,
               "framed_to_terrain": bool(spatial),
               "pins": sum(len(h["pins"]) for h in hole_rows)}
     if spatial:
@@ -455,6 +507,9 @@ def main():
     print(f"Layout for {args.course}")
     r = process_layout(args.course, args.pins)
     print(f"  {r['holes']} holes, {r['surfaces']} shapes ({r['extra_surfaces']} from extra_surfaces.geojson), {r['pins']} pins")
+    if any(r["photo_bunkers"].values()):
+        print(f"  Arccos bunkers: {r['photo_bunkers']['replaced']} given photo outlines, "
+              f"{r['photo_bunkers']['dropped']} dropped (no sand in the photo)")
     print("  SVG framed to the terrain" if r["framed_to_terrain"]
           else "  No terrain yet: SVG framed to the shapes. Run 01_lidar.py, then this stage again.")
     if "elevation_mean_diff_m" in r:

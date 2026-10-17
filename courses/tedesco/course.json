@@ -25,5 +25,9 @@
   "arccos": {
     "course_id": 6878,
     "course_version": 4
+  },
+  "layout": {
+    "bunkers_from_photo": true,
+    "drop_bunkers_without_sand": false
   }
 }

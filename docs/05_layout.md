@@ -25,6 +25,15 @@ python pipeline/05_layout.py --course tedesco --pins 5   # keep 5 pin spots per 
 
 Run it after Stage 01 for the best result. Without the terrain, the SVG is framed to the shapes with a 40 m border and the elevation check is skipped; the script says so.
 
+### Options (`course.json`)
+
+```json
+"layout": {"bunkers_from_photo": true, "drop_bunkers_without_sand": false}
+```
+
+- `bunkers_from_photo`: replace each Arccos bunker with Stage 05b's photo outline of the same sand, which is usually more accurate. Tedesco: 34 replaced.
+- `drop_bunkers_without_sand`: remove Arccos bunkers where Stage 05b saw only grass. Off for Tedesco until the 14 are checked.
+
 ---
 
 ## Inputs
