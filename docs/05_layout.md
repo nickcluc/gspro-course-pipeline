@@ -28,10 +28,11 @@ Run it after Stage 01 for the best result. Without the terrain, the SVG is frame
 ### Options (`course.json`)
 
 ```json
-"layout": {"bunkers_from_photo": true, "drop_bunkers_without_sand": false}
+"layout": {"bunkers_from_photo": true, "greens_from_photo": true, "drop_bunkers_without_sand": false}
 ```
 
-- `bunkers_from_photo`: replace each Arccos bunker with Stage 05b's photo outline of the same sand, which is usually more accurate. Tedesco: 34 replaced.
+- `bunkers_from_photo`: replace each Arccos bunker with Stage 05b's photo outline of the same sand, which is usually more accurate. Tedesco: 39 replaced.
+- `greens_from_photo`: replace each Arccos green with Stage 05b's photo outline. Arccos greens are drawn 1–3 m inside the real edge; Tedesco's are on average 1.5 times bigger in the photo.
 - `drop_bunkers_without_sand`: remove Arccos bunkers where Stage 05b saw only grass. Off for Tedesco until the 14 are checked.
 
 ---

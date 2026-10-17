@@ -1,4 +1,4 @@
-# Stage 05b: Photo check (bunkers, native grass and trees)
+# Stage 05b: Photo check (bunkers, greens, native grass and trees)
 
 **Script:** `pipeline/05b_photo_surfaces.py`
 
@@ -13,6 +13,7 @@ Checks the Arccos map against the NAIP aerial photo from Stage 03, which has red
 | `bunker_missing_from_arccos` | Sand in the photo, no Arccos bunker there | red |
 | `bunker_matches_arccos` | Sand matching an Arccos bunker; its photo outline is usually more accurate than Arccos's | green |
 | `arccos_bunker_no_sand_seen` | An Arccos bunker with grass in the photo: grassed over or misplaced | orange |
+| `green_from_photo` | The green's real edge, for every Arccos green | pink outline |
 | `native_grass` | Brown, dry long-grass areas, which Arccos doesn't map | purple |
 | `trees_missing_from_arccos` | Woods near the holes that Arccos doesn't map | blue |
 
@@ -50,6 +51,17 @@ The limits that separate bunkers from look-alikes are also learned, from the san
 
 Areas must also be 15–3,000 m² and at least 2.5 m wide. With fewer than 8 matching bunkers, the stage uses those Tedesco values as defaults.
 
+### Greens
+
+Arccos draws greens as rounded blobs 1–3 m inside the real edge. A green is smooth and evenly mown, so its edge shows as a step in colour from the collar and fringe. For each Arccos green:
+
+1. Its middle (more than 2 m inside the outline) is marked as green. Anything more than 7 m outside it, and any sand, trees or water, is marked as not green.
+2. The edge settles on the strongest colour step between the two (a watershed).
+3. Tree shadow is dark, so the edge stops at it. The outline is traced as a distance from the green's centre at every degree, and where the edge stops at shadow, the distance comes from the clear edge either side.
+4. The distances are smoothed round the circle, so the outline is a clean, rounded shape.
+
+Arccos's own middle always stays in. Turn on `greens_from_photo` in `course.json` to use these outlines in Stage 05.
+
 ### Trees
 
 Arccos maps only some of the woods. Tree pixels are told apart from turf and rough by three models learned from the course: the Arccos tree areas, the fairways, and a rough strip 2–8 m outside the fairways. Each model uses brightness, plant signal, near-infrared and texture (trees are darker and patchier than grass). Each pixel goes to the closest model. The result is cleaned up, gaps under 50 m² are filled, and anything already mapped as turf, sand or water is left out. Only woods within 60 m of turf are kept, and each area must be at least 100 m². Large areas are cut into 60 m tiles so each piece stays a simple shape.
@@ -70,5 +82,6 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 17 bunkers missing from Arccos, including the fairway bunker left of hole 1 in front of the trees, and four around hole 2's green
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
+- 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 488 m² against Arccos's 268 m²
 - 227 tree areas Arccos doesn't map, most on the back nine (25 on hole 16)
 - Runs in about 2½ minutes

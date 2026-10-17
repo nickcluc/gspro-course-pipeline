@@ -361,6 +361,150 @@ def nearest_hole(ring, centres: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Greens
+# ---------------------------------------------------------------------------
+
+GREEN_SEED_M = 2.0      # Arccos green pixels this far inside its edge are surely green
+GREEN_REACH_M = 7.0     # the real edge is looked for up to this far outside the Arccos outline
+GREEN_SMOOTH_M = 1.5    # round filter that takes the ragged bits off the edge
+GREEN_ROUND_M = 1.5     # blur that turns the outline into a smooth shape
+GREEN_SHADOW_DARK = 0.7  # shadow: darker than this share of the green's middle
+
+
+def _disk(r: int) -> np.ndarray:
+    y, x = np.ogrid[-r:r + 1, -r:r + 1]
+    return x * x + y * y <= r * r
+
+
+def green_outline(img: np.ndarray, lab: np.ndarray, m: np.ndarray, px: float) -> np.ndarray:
+    """
+    The putting surface around one Arccos green (mask m), from the photo.
+
+    A green is smooth and evenly mown, so its edge shows as a step in colour.
+    The Arccos green's middle seeds the green; anything over GREEN_REACH_M outside it,
+    and any sand, trees or water, seeds "not green". The edge settles on the strongest
+    colour step between them (a watershed). Arccos's middle always stays in, bites
+    taken by tree shadow are filled from the edge either side, and the outline is smoothed.
+    """
+    grad = sum(np.hypot(ndi.sobel(c, 0), ndi.sobel(c, 1))
+               for c in (ndi.gaussian_filter(img[i], 1.2) * w for i, w in ((0, 1), (1, 1), (2, 1), (3, 0.5))))
+    grad = np.clip(grad / (np.percentile(grad, 99) + 1e-6) * 255, 0, 255).astype(np.uint8)
+    d_out = ndi.distance_transform_edt(~m) * px
+    d_in = ndi.distance_transform_edt(m) * px
+    markers = np.zeros(m.shape, np.int16)
+    other = np.isin(lab, [LABELS["sand"], LABELS["trees"], LABELS["water"]]) & ~m
+    markers[(d_out > GREEN_REACH_M) | other] = 2
+    markers[d_in > GREEN_SEED_M] = 1
+    if not (markers == 1).any():
+        return m
+    g = ndi.watershed_ift(grad, markers) == 1
+    g = _largest_touching(_smooth(g, px, GREEN_SMOOTH_M), m)
+    g = ndi.binary_fill_holes(g | ndi.binary_erosion(m, iterations=max(1, int(1 / px))))
+    return _round_out(img, lab, g, px)
+
+
+def _round_out(img, lab, g, px, steps: int = 360) -> np.ndarray:
+    """
+    Turns a green mask into a smooth shape and fills bites taken by tree shadow.
+
+    The edge is traced as a distance from the green's centre at each of `steps` angles.
+    Where the edge stops at shadow (anything much darker than the green's middle), the
+    real edge can't be seen, so that distance comes from the nearest clear angles on
+    either side. The distances are then smoothed round the circle.
+    """
+    from rasterio.features import rasterize
+    ys, xs = np.nonzero(g)
+    if len(xs) < 20:
+        return g
+    cy, cx = ys.mean(), xs.mean()
+    bright = ndi.uniform_filter((img[0] + img[1] + img[2]) / 3, 3)
+    middle = ndi.distance_transform_edt(g) * px > 2.0
+    ref = np.median(bright[middle]) if middle.sum() >= 20 else np.median(bright[g])
+    shadow = (bright < GREEN_SHADOW_DARK * ref) & (lab != LABELS["sand"]) & (lab != LABELS["water"])
+    shadow = ndi.binary_dilation(shadow, iterations=max(1, int(0.6 / px)))
+
+    H, W = g.shape
+    step = 0.5  # pixels
+    rmax = np.hypot(H, W)
+    t = np.linspace(0, 2 * np.pi, steps, endpoint=False)
+    radii = np.arange(0, rmax, step)
+    yy = np.clip(np.round(cy + np.outer(np.sin(t), radii)).astype(int), 0, H - 1)
+    xx = np.clip(np.round(cx + np.outer(np.cos(t), radii)).astype(int), 0, W - 1)
+    inside = g[yy, xx]
+    first_out = np.argmax(~inside, axis=1)                 # first step outside the green
+    first_out[inside.all(axis=1)] = len(radii) - 1
+    r = radii[first_out]
+    probe = np.minimum(first_out[:, None] + np.arange(0, int(1.5 / px / step) + 1), len(radii) - 1)
+    hidden = shadow[np.take_along_axis(yy, probe, 1), np.take_along_axis(xx, probe, 1)].any(axis=1)
+
+    if hidden.any() and not hidden.all():
+        clear = np.nonzero(~hidden)[0]
+        k = np.arange(steps)
+        # nearest clear angle either way round, then a straight line between them
+        nxt = clear[np.searchsorted(clear, k) % len(clear)]
+        prv = clear[(np.searchsorted(clear, k, side="right") - 1) % len(clear)]
+        da = (nxt - k) % steps
+        db = (k - prv) % steps
+        w = np.where(da + db > 0, db / np.maximum(da + db, 1), 0)
+        guess = r[prv] * (1 - w) + r[nxt] * w
+        r = np.where(hidden, np.maximum(r, guess), r)
+
+    sigma = GREEN_ROUND_M / px / max(float(np.median(r)), 1.0) * steps / (2 * np.pi)
+    r = ndi.gaussian_filter1d(r, max(sigma, 1.0), mode="wrap")
+    ring = [(float(cx + ri * np.cos(a)) + 0.5, float(cy + ri * np.sin(a)) + 0.5) for ri, a in zip(r, t)]
+    return rasterize([({"type": "Polygon", "coordinates": [ring + [ring[0]]]}, 1)], out_shape=g.shape,
+                     fill=0, dtype="uint8") > 0
+
+
+
+def _smooth(g: np.ndarray, px: float, r_m: float) -> np.ndarray:
+    disk = _disk(max(1, int(round(r_m / px))))
+    return ndi.binary_closing(ndi.binary_opening(g, disk), disk)
+
+
+def _largest_touching(g: np.ndarray, m: np.ndarray) -> np.ndarray:
+    lbl, n = ndi.label(g)
+    if n > 1:
+        g = lbl == int(np.argmax(ndi.sum(m, lbl, range(1, n + 1)))) + 1
+    return g
+
+
+
+
+def green_outlines(img, tf, lab, surfaces, px) -> list[dict]:
+    """A photo outline for every Arccos green (each shared green once)."""
+    import rasterio
+    from rasterio.features import rasterize
+    inv = ~tf
+    out, seen = [], set()
+    for s in surfaces:
+        if s["surface"] != "green":
+            continue
+        key = tuple(round(v) for v in layout.centroid(s["en"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        cols = np.array([inv @ p for p in s["en"]])
+        pad = int((GREEN_REACH_M + 10) / px)
+        c0, r0 = np.maximum((cols.min(0) - pad).astype(int), 0)
+        c1, r1 = (cols.max(0) + pad).astype(int)
+        c1, r1 = min(c1, lab.shape[1]), min(r1, lab.shape[0])
+        if c1 - c0 < 10 or r1 - r0 < 10:
+            continue  # outside the photo
+        sub_tf = tf @ rasterio.Affine.translation(c0, r0)
+        m = rasterize([({"type": "Polygon", "coordinates": [s["en"] + [s["en"][0]]]}, 1)],
+                      out_shape=(r1 - r0, c1 - c0), transform=sub_tf, fill=0, dtype="uint8") > 0
+        if m.sum() < 20:
+            continue
+        g = green_outline(img[:, r0:r1, c0:c1], lab[r0:r1, c0:c1], m, px)
+        rings = outlines(g, sub_tf)
+        if rings:
+            out.append({"hole": s["hole"], "ring": max(rings, key=len),
+                        "arccos_m2": round(float(m.sum()) * px * px), "photo_m2": round(float(g.sum()) * px * px)})
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -442,6 +586,10 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
                 add(ring, {"finding": "trees_missing_from_arccos", "surface": "trees", "area_m2": round(area, 1),
                            "source": "aerial photo"})
 
+    for g in green_outlines(img, tf, lab, surfaces, px):
+        add(g["ring"], {"finding": "green_from_photo", "surface": "green", "arccos_m2": g["arccos_m2"],
+                        "photo_m2": g["photo_m2"], "source": "aerial photo"})
+
     native, native_lim = native_mask(img, lab, px)
     for ring in outlines(native > 0, tf):
         area = abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]))) / 2
@@ -486,7 +634,7 @@ def draw_overlays(img, tf, surfaces, feats, epsg, out_dir: Path, max_px: int = 1
     rgb = np.clip(np.moveaxis(img[:3], 0, -1), 0, 255).astype(np.uint8)
     colours = {"bunker_matches_arccos": (0, 220, 0), "bunker_missing_from_arccos": (255, 30, 30),
                "arccos_bunker_no_sand_seen": (255, 140, 0), "native_grass": (170, 60, 240),
-               "trees_missing_from_arccos": (0, 90, 255)}
+               "trees_missing_from_arccos": (0, 90, 255), "green_from_photo": (255, 0, 255)}
     edge = {"green": (40, 120, 255), "fairway": (255, 255, 255), "tee": (255, 0, 255), "bunker": (255, 230, 0)}
     for hole in sorted({s["hole"] for s in surfaces}):
         mine = [s for s in surfaces if s["hole"] == hole and s["surface"] in edge]
@@ -503,7 +651,10 @@ def draw_overlays(img, tf, surfaces, feats, epsg, out_dir: Path, max_px: int = 1
         to_px = lambda e, n: ((inv @ (e, n))[0] - c0, (inv @ (e, n))[1] - r0)  # noqa: E731
         for f in feats:
             ring = [to_px(*to_en.transform(x, y)) for x, y in f["geometry"]["coordinates"][0]]
-            d.polygon(ring, fill=colours[f["properties"]["finding"]] + (120,))
+            if f["properties"]["finding"] == "green_from_photo":
+                d.line(ring, fill=colours["green_from_photo"] + (255,), width=3)  # outline only, so the green shows
+            else:
+                d.polygon(ring, fill=colours[f["properties"]["finding"]] + (120,))
         for s in mine:
             ring = [to_px(e, n) for e, n in s["en"]]
             d.line(ring + [ring[0]], fill=edge[s["surface"]] + (255,), width=3)

@@ -159,6 +159,32 @@ class TestProcess:
         mask, _ = photo.tree_mask(np.clip(img, 0, 255), lab, PX)
         assert mask[:, 210:255].mean() > 0.8 and mask[:, :120].mean() < 0.05
 
+    def test_green_grows_to_its_real_edge(self):
+        rng = np.random.default_rng(3)
+        y, x = np.mgrid[:200, :200]
+        r = np.hypot(x - 100, y - 100) * PX
+        img = np.zeros((4, 200, 200), np.float32)
+        img[:] = np.array(TURF, np.float32)[:, None, None]
+        img[:, r < 12] = np.array((165, 185, 140, 210), np.float32)[:, None]  # real green, radius 12 m
+        img += rng.normal(0, 3, img.shape).astype(np.float32)
+        arccos = r < 8                                                       # Arccos drew it too small
+        g = photo.green_outline(img, np.zeros((200, 200), np.uint8), arccos, PX)
+        assert g.sum() * PX * PX == pytest.approx(np.pi * 12 ** 2, rel=0.12)
+        assert g[arccos].all()
+
+    def test_green_under_tree_shadow_is_filled(self):
+        rng = np.random.default_rng(4)
+        y, x = np.mgrid[:200, :200]
+        r = np.hypot(x - 100, y - 100) * PX
+        img = np.zeros((4, 200, 200), np.float32)
+        img[:] = np.array(TURF, np.float32)[:, None, None]
+        img[:, r < 12] = np.array((165, 185, 140, 210), np.float32)[:, None]
+        img[:, (x > 125) & (abs(y - 100) < 25)] *= 0.45                       # shadow over the green's right side
+        img += rng.normal(0, 3, img.shape).astype(np.float32)
+        g = photo.green_outline(img, np.zeros((200, 200), np.uint8), r < 8, PX)
+        assert g.sum() * PX * PX == pytest.approx(np.pi * 12 ** 2, rel=0.12)
+        assert g[100, 131]  # 9.3 m right of centre, under the shadow (the watershed alone stops at 6.9 m)
+
     def test_photo_outlines_replace_and_drop(self, course):
         photo.process("test", overlays=False)
         cfg = json.loads((course / "course.json").read_text())

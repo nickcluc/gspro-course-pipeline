@@ -189,6 +189,29 @@ def apply_photo_bunkers(surfaces: list[dict], photo_path: Path, project,
     return stats
 
 
+def apply_photo_greens(surfaces: list[dict], photo_path: Path, project, replace: bool) -> int:
+    """
+    Swaps each Arccos green for Stage 05b's photo outline of it. Arccos greens are
+    usually drawn 1–3 m inside the real edge (Tedesco's average 1.4 times too small).
+    """
+    if not replace or not photo_path.exists():
+        return 0
+    photo = []
+    for f in json.loads(photo_path.read_text()).get("features") or []:
+        if f["properties"].get("finding") == "green_from_photo":
+            ll = [tuple(c[:2]) for c in f["geometry"]["coordinates"][0][:-1]]
+            photo.append({"lonlat": ll, "en": [project(x, y) for x, y in ll]})
+    n = 0
+    for i, s in enumerate(surfaces):
+        if s["surface"] == "green" and s.get("arccos_type") is not None:
+            hits = [p for p in photo if overlaps(s["en"], p["en"])]
+            if hits:
+                best = max(hits, key=lambda p: len(p["en"]))
+                surfaces[i] = dict(s, en=best["en"], lonlat=best["lonlat"], arccos_name=s["arccos_name"] + " (photo outline)")
+                n += 1
+    return n
+
+
 def load_rounds(rounds_dir: Path) -> list[dict]:
     return [json.loads(f.read_text()) for f in sorted(rounds_dir.glob("*.json"))] if rounds_dir.exists() else []
 
@@ -499,6 +522,8 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     holes = load_holes(paths["holes"])
     surfaces = build_surfaces(holes, project)
     opts = cfg.get("layout") or {}
+    photo_greens = apply_photo_greens(surfaces, paths["out"] / "photo_surfaces.geojson", project,
+                                      bool(opts.get("greens_from_photo")))
     photo_stats = apply_photo_bunkers(surfaces, paths["out"] / "photo_surfaces.geojson", project,
                                       bool(opts.get("bunkers_from_photo")), bool(opts.get("drop_bunkers_without_sand")))
     extras, removals = load_extras(paths["extras"], project)
@@ -521,7 +546,7 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     write_svg(surfaces, frame, out / f"{slug}_surfaces_opcd.svg", f"{cfg.get('name')} from Arccos, EPSG:{epsg}")
 
     result = {"holes": len(hole_rows), "surfaces": len(surfaces), "extra_surfaces": len(extras),
-              "photo_bunkers": photo_stats, "removed_by_corrections": removed,
+              "photo_bunkers": photo_stats, "photo_greens": photo_greens, "removed_by_corrections": removed,
               "framed_to_terrain": bool(spatial),
               "pins": sum(len(h["pins"]) for h in hole_rows)}
     if spatial:
@@ -541,6 +566,8 @@ def main():
     print(f"  {r['holes']} holes, {r['surfaces']} shapes ({r['extra_surfaces']} from extra_surfaces.geojson), {r['pins']} pins")
     if r["removed_by_corrections"]:
         print(f"  Removed {r['removed_by_corrections']} Arccos shapes per extra_surfaces.geojson")
+    if r["photo_greens"]:
+        print(f"  Arccos greens: {r['photo_greens']} given photo outlines")
     if any(r["photo_bunkers"].values()):
         print(f"  Arccos bunkers: {r['photo_bunkers']['replaced']} given photo outlines, "
               f"{r['photo_bunkers']['dropped']} dropped (no sand in the photo)")
