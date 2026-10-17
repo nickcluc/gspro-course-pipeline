@@ -278,16 +278,17 @@ def plan_scene(slug: str, max_edge_m: float = 3.0) -> dict:
             _seen.add((t["surface"], shape_key(t["points"])))
             totals[(t["hole"], t["surface"])] = totals.get((t["hole"], t["surface"]), 0) + 1
     outlines: dict[int, list] = {}
-    seen: set = set()
+    seen: dict = {}
     duplicates = 0
     for s in surfaces:
         if s["surface"] not in SURFACES:
             continue
         k = (s["surface"], shape_key(s["points"]))
-        if k in seen:  # same shape on another hole's map (a shared pond, a tree line)
+        if k in seen:  # same shape on another hole's map (a shared pond, a tree line): build once, show on both
             duplicates += 1
+            if s["hole"] not in seen[k]["also_holes"] and s["hole"] != seen[k]["hole"]:
+                seen[k]["also_holes"].append(s["hole"])
             continue
-        seen.add(k)
         key = (s["hole"], s["surface"])
         counts[key] = counts.get(key, 0) + 1
         name = f"h{s['hole']:02d}_{s['surface']}"
@@ -296,10 +297,12 @@ def plan_scene(slug: str, max_edge_m: float = 3.0) -> dict:
         ring = densify(s["points"], max_edge_m)
         nth = sum(1 for p in plan["surfaces"] if p["surface"] == s["surface"])
         h = lift(s["surface"], nth)
-        plan["surfaces"].append({
-            "name": name, "hole": s["hole"], "surface": s["surface"], "lift_m": h,
+        spec = {
+            "name": name, "hole": s["hole"], "also_holes": [], "surface": s["surface"], "lift_m": h,
             "outline": [(x, y, sampler.height(x, y) + h) for x, y in ring],
-        })
+        }
+        seen[k] = spec
+        plan["surfaces"].append(spec)
         if s["surface"] == "green":
             outlines.setdefault(s["hole"], []).append(s["points"])
 
@@ -447,9 +450,13 @@ def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "work
 
     failed = []
     for spec in plan["surfaces"]:
-        if not _surface_object(bpy, bmesh, spec, sampler.height, plan["max_edge_m"],
-                               hole_col(spec["hole"]), mats[spec["surface"]]):
+        obj = _surface_object(bpy, bmesh, spec, sampler.height, plan["max_edge_m"],
+                              hole_col(spec["hole"]), mats[spec["surface"]])
+        if not obj:
             failed.append(spec["name"])
+            continue
+        for n in spec.get("also_holes") or []:  # shared shapes also belong to the other holes' collections
+            hole_col(n).objects.link(obj)
     for g in plan["greens"]:
         _mesh_object(bpy, g["name"], g["verts"], g["faces"], hole_col(g["hole"]), mats["green_puttview"])
     drawn: list = []

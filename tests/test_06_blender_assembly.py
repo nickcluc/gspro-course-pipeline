@@ -165,7 +165,8 @@ class TestPlan:
                              {"hole": 2, "surface": "water", "points": pond[1:] + pond[:1]}]
         f.write_text(json.dumps(data))
         plan = asm.plan_scene("test")
-        assert [s["name"] for s in plan["surfaces"] if s["surface"] == "water"] == ["h01_water"]
+        water = [s for s in plan["surfaces"] if s["surface"] == "water"]
+        assert [s["name"] for s in water] == ["h01_water"] and water[0]["also_holes"] == [2]
         assert plan["report"]["duplicate_shapes_skipped"] == 1
 
     def test_surface_layers_stack(self):
