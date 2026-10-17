@@ -151,6 +151,27 @@ class TestProcess:
         photo.process("test", overlays=False)
         assert layout.process_layout("test")["photo_bunkers"] == {"replaced": 0, "dropped": 0}
 
+    def test_correction_removes_bunker_and_adds_penalty_area(self, course):
+        from pyproj import Transformer
+        t = Transformer.from_crs(32619, 4326, always_xy=True)
+        ring = [list(t.transform(E0 + e, N0 - n)) for e, n in ((8, 88), (20, 88), (20, 100), (8, 100), (8, 88))]
+        (course / "extra_surfaces.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"action": "remove", "surface": "bunker", "hole": 1},
+             "geometry": {"type": "Polygon", "coordinates": [ring]}},
+            {"type": "Feature", "properties": {"surface": "penalty_area", "hole": 1, "note": "staked red"},
+             "geometry": {"type": "Polygon", "coordinates": [ring]}}]}))
+        r = layout.process_layout("test")
+        assert r["removed_by_corrections"] == 1
+        h = json.loads((course / "output" / "layout" / "holes.json").read_text())["holes"][0]
+        assert h["surface_counts"]["bunker"] == 1 and h["penalty_areas"][0]["note"] == "staked red"
+        svg = (course / "output" / "layout" / "test_surfaces_opcd.svg").read_text()
+        assert "penalty" not in svg  # set in GreenKeeper, not drawn as a surface
+
+    def test_curved_shape_overlap(self):
+        crescent = [(0, 0), (10, 0), (10, 10), (8, 10), (8, 2), (0, 2)]  # centre falls outside it
+        assert not layout._inside(*layout.centroid(crescent), crescent)
+        assert layout.overlaps(crescent, [(x * 1.05, y * 1.05) for x, y in crescent])
+
     def test_overlays_written(self, course):
         photo.process("test")
         assert (course / "output" / "layout" / "photo_check" / "hole_01.jpg").exists()

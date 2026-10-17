@@ -53,7 +53,7 @@ from utils import REPO_ROOT, load_course_config  # noqa: E402
 SURFACE_LIFT_M = 0.03     # surfaces sit just above the terrain so they show in renders
 # Each surface type sits a little higher than the one under it, so overlaps don't flicker
 LAYER_STEP_M = 0.01
-LAYER_ORDER = ("native", "fairway", "tee", "trees", "green", "bunker", "water")
+LAYER_ORDER = ("native", "fairway", "tee", "trees", "green", "bunker", "water", "penalty_area")
 CAMERA_BACK_M = 40.0      # camera distance behind the tee
 CAMERA_UP_M = 25.0        # camera height above the tee (a flyover-style view)
 
@@ -61,7 +61,7 @@ CAMERA_UP_M = 25.0        # camera height above the tee (a flyover-style view)
 COLOURS = {
     "terrain": "#278438", "native": "#8A7F3D", "fairway": "#43E561", "tee": "#A0E5B8", "trees": "#164B20",
     "green": "#BCE5A4", "bunker": "#E5E5AA", "water": "#0000C0", "green_puttview": "#7FD67F",
-    "tee_marker": "#FFFFFF", "pin_marker": "#E03C31",
+    "tee_marker": "#FFFFFF", "pin_marker": "#E03C31", "penalty_area": "#D9534F",
 }
 MARKER_RADIUS_M = {"tee": 2.0, "pin": 1.5}  # discs drawn so markers show in renders
 SURFACES = LAYER_ORDER

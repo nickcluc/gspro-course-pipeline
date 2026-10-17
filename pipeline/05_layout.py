@@ -95,23 +95,40 @@ def load_holes(holes_dir: Path) -> list[dict]:
     return [json.loads(f.read_text()) for f in files]
 
 
-def load_extras(path: Path, project) -> list[dict]:
+def load_extras(path: Path, project) -> tuple[list[dict], list[dict]]:
     """
-    Shapes you add by hand or accept from Stage 05b (courses/<slug>/extra_surfaces.geojson):
-    WGS84 polygons with properties `surface` (bunker, native, green, ...) and `hole`.
+    Corrections you add by hand or accept from Stage 05b (courses/<slug>/extra_surfaces.geojson).
+    Each feature is a WGS84 polygon with properties:
+      {"surface": "bunker" | "native" | "penalty_area" | "green" | ..., "hole": 14}   adds a shape
+      {"action": "remove", "surface": "bunker", "hole": 14}                         removes every Arccos
+          shape of that surface that mostly lies inside the polygon (or contains it)
+    Returns (shapes to add, removals).
     """
     if not path.exists():
-        return []
-    out = []
+        return [], []
+    out, removals = [], []
     for i, f in enumerate(json.loads(path.read_text()).get("features") or []):
         p = f.get("properties") or {}
         ring = (f.get("geometry") or {}).get("coordinates", [[]])[0]
+        if p.get("action") == "remove" and len(ring) >= 4:
+            removals.append({"surface": p.get("surface"), "hole": p.get("hole"), "note": p.get("note"),
+                             "en": [project(*c[:2]) for c in ring[:-1]]})
+            continue
         if p.get("surface") and len(ring) >= 4:
             ll = [tuple(c[:2]) for c in ring[:-1]]
             out.append({"hole": int(p.get("hole") or 0), "index": 1000 + i, "arccos_type": None,
                         "arccos_name": "Extra (" + str(p.get("source") or "added") + ")",
-                        "surface": p["surface"], "lonlat": ll, "en": [project(x, y) for x, y in ll]})
-    return out
+                        "surface": p["surface"], "lonlat": ll, "en": [project(x, y) for x, y in ll],
+                        "note": p.get("note")})
+    return out, removals
+
+
+def apply_removals(surfaces: list[dict], removals: list[dict]) -> int:
+    """Drops shapes whose centre is inside a removal polygon of the same surface."""
+    before = len(surfaces)
+    surfaces[:] = [s for s in surfaces if not any(
+        (r["surface"] in (None, s["surface"])) and overlaps(s["en"], r["en"]) for r in removals)]
+    return before - len(surfaces)
 
 
 def _inside(x: float, y: float, poly: list) -> bool:
@@ -124,6 +141,16 @@ def _inside(x: float, y: float, poly: list) -> bool:
     return hit
 
 
+def overlaps(a: list, b: list, share: float = 0.5) -> bool:
+    """
+    True when most of one outline lies inside the other. Uses outline points, not the
+    centre, because a curved bunker's centre can fall outside the bunker itself.
+    """
+    def frac(p, q):
+        return sum(_inside(x, y, q) for x, y in p) / max(len(p), 1)
+    return _inside(*centroid(a), b) or _inside(*centroid(b), a) or frac(a, b) >= share or frac(b, a) >= share
+
+
 def apply_photo_bunkers(surfaces: list[dict], photo_path: Path, project,
                         replace: bool, drop_unseen: bool) -> dict:
     """
@@ -131,7 +158,7 @@ def apply_photo_bunkers(surfaces: list[dict], photo_path: Path, project,
       replace     — swap each Arccos bunker for the photo's outline of the same sand
                     (Arccos outlines are often too small or a few metres off)
       drop_unseen — remove Arccos bunkers where the photo shows only grass
-    A photo outline matches an Arccos bunker when either one's centre is inside the other.
+    A photo outline matches an Arccos bunker when most of one lies inside the other.
     """
     stats = {"replaced": 0, "dropped": 0}
     if not (replace or drop_unseen) or not photo_path.exists():
@@ -147,12 +174,11 @@ def apply_photo_bunkers(surfaces: list[dict], photo_path: Path, project,
     keep = []
     for s in surfaces:
         if s["surface"] == "bunker" and s.get("arccos_type") is not None:
-            c = centroid(s["en"])
-            if drop_unseen and any(_inside(*c, u) or _inside(*centroid(u), s["en"]) for u in unseen):
+            if drop_unseen and any(overlaps(s["en"], u) for u in unseen):
                 stats["dropped"] += 1
                 continue
             if replace:
-                hits = [p for p in photo if _inside(*centroid(p["en"]), s["en"]) or _inside(*c, p["en"])]
+                hits = [p for p in photo if overlaps(s["en"], p["en"])]
                 if hits:
                     best = max(hits, key=lambda p: len(p["en"]))
                     s = dict(s, en=best["en"], lonlat=best["lonlat"], arccos_name=s["arccos_name"] + " (photo outline)")
@@ -411,6 +437,9 @@ def build_holes(holes: list[dict], surfaces: list[dict], pins: dict, to_local, s
             "pins": [dict(place(p["easting"], p["northing"]), rounds=p["rounds"])
                      for p in pins.get(h["holeId"], [])],
             "surface_counts": dict(Counter(s["surface"] for s in hs)),
+            # penalty areas are set as hazards in GreenKeeper, so they're listed here, not drawn as a surface
+            "penalty_areas": [{"points": [place(e, n) for e, n in s["en"]], "note": s.get("note")}
+                              for s in hs if s["surface"] == "penalty_area"],
         })
     return out
 
@@ -470,7 +499,8 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     opts = cfg.get("layout") or {}
     photo_stats = apply_photo_bunkers(surfaces, paths["out"] / "photo_surfaces.geojson", project,
                                       bool(opts.get("bunkers_from_photo")), bool(opts.get("drop_bunkers_without_sand")))
-    extras = load_extras(paths["extras"], project)
+    extras, removals = load_extras(paths["extras"], project)
+    removed = apply_removals(surfaces, removals)
     surfaces += extras
     frame = svg_frame(surfaces, spatial)
     frame_info = dict(frame, epsg=epsg, source="terrain" if spatial else "shapes + 40 m margin")
@@ -489,7 +519,7 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     write_svg(surfaces, frame, out / f"{slug}_surfaces_opcd.svg", f"{cfg.get('name')} from Arccos, EPSG:{epsg}")
 
     result = {"holes": len(hole_rows), "surfaces": len(surfaces), "extra_surfaces": len(extras),
-              "photo_bunkers": photo_stats,
+              "photo_bunkers": photo_stats, "removed_by_corrections": removed,
               "framed_to_terrain": bool(spatial),
               "pins": sum(len(h["pins"]) for h in hole_rows)}
     if spatial:
@@ -507,6 +537,8 @@ def main():
     print(f"Layout for {args.course}")
     r = process_layout(args.course, args.pins)
     print(f"  {r['holes']} holes, {r['surfaces']} shapes ({r['extra_surfaces']} from extra_surfaces.geojson), {r['pins']} pins")
+    if r["removed_by_corrections"]:
+        print(f"  Removed {r['removed_by_corrections']} Arccos shapes per extra_surfaces.geojson")
     if any(r["photo_bunkers"].values()):
         print(f"  Arccos bunkers: {r['photo_bunkers']['replaced']} given photo outlines, "
               f"{r['photo_bunkers']['dropped']} dropped (no sand in the photo)")
