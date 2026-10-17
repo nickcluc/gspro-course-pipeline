@@ -24,6 +24,7 @@ Input:
     courses/<slug>/data/raw/arccos/holes/hole_XX.json          (Stage 00)
     courses/<slug>/data/raw/arccos/rounds/*.json               (optional)
     courses/<slug>/data/processed/heightmaps/<slug>_terrain.tif (optional, Stage 01)
+    courses/<slug>/extra_surfaces.geojson                      (optional: shapes Arccos lacks, see Stage 05b)
 
 Output:
     courses/<slug>/output/layout/holes.json
@@ -67,6 +68,7 @@ OPCD = {
     "green": ("golf.green", "#BCE5A4", 90),
     "bunker": ("golf.bunker", "#E5E5AA", 100),
     "water": ("golf.water_hazard", "#0000C0", 110),
+    "native": ("natural.scrub", "#8A7F3D", 55),  # long native grass; check its OPCD class
 }
 ROUGH = ("leisure.golf_course", "#278438")
 
@@ -82,6 +84,7 @@ def get_paths(slug: str) -> dict:
         "rounds": base / "data" / "raw" / "arccos" / "rounds",
         "terrain": base / "data" / "processed" / "heightmaps" / f"{slug}_terrain.tif",
         "out": base / "output" / "layout",
+        "extras": base / "extra_surfaces.geojson",
     }
 
 
@@ -90,6 +93,25 @@ def load_holes(holes_dir: Path) -> list[dict]:
     if not files:
         raise FileNotFoundError(f"No Arccos hole maps in {holes_dir}. Run 00_arccos.py first.")
     return [json.loads(f.read_text()) for f in files]
+
+
+def load_extras(path: Path, project) -> list[dict]:
+    """
+    Shapes you add by hand or accept from Stage 05b (courses/<slug>/extra_surfaces.geojson):
+    WGS84 polygons with properties `surface` (bunker, native, green, ...) and `hole`.
+    """
+    if not path.exists():
+        return []
+    out = []
+    for i, f in enumerate(json.loads(path.read_text()).get("features") or []):
+        p = f.get("properties") or {}
+        ring = (f.get("geometry") or {}).get("coordinates", [[]])[0]
+        if p.get("surface") and len(ring) >= 4:
+            ll = [tuple(c[:2]) for c in ring[:-1]]
+            out.append({"hole": int(p.get("hole") or 0), "index": 1000 + i, "arccos_type": None,
+                        "arccos_name": "Extra (" + str(p.get("source") or "added") + ")",
+                        "surface": p["surface"], "lonlat": ll, "en": [project(x, y) for x, y in ll]})
+    return out
 
 
 def load_rounds(rounds_dir: Path) -> list[dict]:
@@ -397,6 +419,8 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
 
     holes = load_holes(paths["holes"])
     surfaces = build_surfaces(holes, project)
+    extras = load_extras(paths["extras"], project)
+    surfaces += extras
     frame = svg_frame(surfaces, spatial)
     frame_info = dict(frame, epsg=epsg, source="terrain" if spatial else "shapes + 40 m margin")
     to_local = local_frame(frame)
@@ -413,7 +437,8 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     write_local(surfaces, to_local, frame_info, out / "surfaces_local.json")
     write_svg(surfaces, frame, out / f"{slug}_surfaces_opcd.svg", f"{cfg.get('name')} from Arccos, EPSG:{epsg}")
 
-    result = {"holes": len(hole_rows), "surfaces": len(surfaces), "framed_to_terrain": bool(spatial),
+    result = {"holes": len(hole_rows), "surfaces": len(surfaces), "extra_surfaces": len(extras),
+              "framed_to_terrain": bool(spatial),
               "pins": sum(len(h["pins"]) for h in hole_rows)}
     if spatial:
         check = check_elevation(elevation_points(holes, project), paths["terrain"])
@@ -429,7 +454,7 @@ def main():
     args = parser.parse_args()
     print(f"Layout for {args.course}")
     r = process_layout(args.course, args.pins)
-    print(f"  {r['holes']} holes, {r['surfaces']} shapes, {r['pins']} pins")
+    print(f"  {r['holes']} holes, {r['surfaces']} shapes ({r['extra_surfaces']} from extra_surfaces.geojson), {r['pins']} pins")
     print("  SVG framed to the terrain" if r["framed_to_terrain"]
           else "  No terrain yet: SVG framed to the shapes. Run 01_lidar.py, then this stage again.")
     if "elevation_mean_diff_m" in r:

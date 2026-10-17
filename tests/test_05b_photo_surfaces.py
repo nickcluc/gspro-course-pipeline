@@ -1,0 +1,151 @@
+"""
+Tests for pipeline/05b_photo_surfaces.py, plus the extra-shapes merge in 05_layout.py
+
+Run with:
+    .venv/bin/pytest tests/test_05b_photo_surfaces.py -v
+
+Uses a synthetic 4-band aerial image (120 m square, 0.3 m pixels) with:
+  - a bunker Arccos maps (sand)       -> bunker_matches_arccos
+  - sand next to the fairway, unmapped -> bunker_missing_from_arccos
+  - a thin grey path                  -> rejected (not a bunker)
+  - an Arccos bunker on plain grass   -> arccos_bunker_no_sand_seen
+  - a brown patch in the rough        -> native_grass
+"""
+
+import importlib
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+import utils  # noqa: E402
+
+layout = importlib.import_module("05_layout")
+photo = importlib.import_module("05b_photo_surfaces")
+
+E0, N0, PX, SIZE = 344000.0, 4705000.0, 0.3, 400  # image top-left (EPSG:32619) and pixel grid
+TURF = (133, 150, 109, 198)
+SAND = (214, 208, 198, 193)
+PATH = (182, 180, 176, 150)
+NATIVE = (150, 146, 105, 176)
+
+
+def to_ll(e, n):
+    from pyproj import Transformer
+    lon, lat = Transformer.from_crs(32619, 4326, always_xy=True).transform(e, n)
+    return {"latitude": lat, "longitude": lon}
+
+
+def rect(e0, n0, e1, n1):
+    """Arccos-style outline (lat/lon) of a rectangle in metres from the image's top-left."""
+    return [to_ll(E0 + e0, N0 - n0), to_ll(E0 + e1, N0 - n0), to_ll(E0 + e1, N0 - n1), to_ll(E0 + e0, N0 - n1)]
+
+
+def paint(img, e0, n0, e1, n1, colour):
+    """Fills metres (e0..e1 east, n0..n1 south of top-left) with a colour."""
+    img[:, int(n0 / PX):int(n1 / PX), int(e0 / PX):int(e1 / PX)] = np.array(colour, np.float32)[:, None, None]
+
+
+@pytest.fixture
+def course(tmp_path, monkeypatch):
+    for m in (utils, layout, photo):
+        monkeypatch.setattr(m, "REPO_ROOT", tmp_path)
+    base = tmp_path / "courses" / "test"
+    (base / "data" / "raw" / "arccos" / "holes").mkdir(parents=True)
+    (base / "course.json").write_text(json.dumps({"name": "Test", "slug": "test", "holes": 1}))
+    hole = {"holeId": 1, "mensPar": 4, "holeTees": [], "features": [
+        {"featureId": 7, "coordinates": rect(30, 10, 60, 110)},    # fairway
+        {"featureId": 1, "coordinates": rect(35, 112, 55, 118)},   # green (thin, at the bottom)
+        {"featureId": 2, "coordinates": rect(65, 20, 77, 32)},     # bunker Arccos has (sand painted)
+        {"featureId": 2, "coordinates": rect(10, 90, 18, 98)},     # bunker Arccos has (grass only)
+    ]}
+    (base / "data" / "raw" / "arccos" / "holes" / "hole_01.json").write_text(json.dumps(hole))
+
+    rng = np.random.default_rng(1)
+    img = np.zeros((4, SIZE, SIZE), np.float32)
+    paint(img, 0, 0, 120, 120, TURF)
+    paint(img, 65, 20, 77, 32, SAND)          # mapped bunker
+    paint(img, 64, 60, 74, 70, SAND)          # unmapped bunker beside the fairway
+    paint(img, 20, 0, 21.5, 80, PATH)         # thin path
+    paint(img, 2, 40, 22, 60, NATIVE)         # native patch
+    img += rng.normal(0, 3, img.shape).astype(np.float32)
+
+    import rasterio
+    from rasterio.transform import from_origin
+    tif = base / "data" / "processed" / "textures" / "test_imagery.tif"
+    tif.parent.mkdir(parents=True)
+    with rasterio.open(tif, "w", driver="GTiff", height=SIZE, width=SIZE, count=4, dtype="uint8",
+                       crs="EPSG:32619", transform=from_origin(E0, N0, PX, PX)) as ds:
+        ds.write(np.clip(img, 0, 255).astype(np.uint8))
+    return base
+
+
+class TestHelpers:
+    def test_simplify_ring_keeps_a_square(self):
+        ring = [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (0, 1), (0, 0)]
+        out = photo.simplify_ring(ring, 0.1)
+        assert sorted(out) == [(0, 0), (0, 2), (2, 0), (2, 2)]
+
+    def test_limits_fall_back_without_enough_bunkers(self):
+        lim = photo.learn_limits([{"arccos_overlap": 1, "nir": 200, "elong": 1, "fill": 0.9, "turf_gap_m": 1}])
+        assert lim["learned_from"] == 0 and lim["nir_min"] == photo.DEFAULTS["nir_min"]
+
+    def test_limits_learned_from_matching_bunkers(self):
+        known = [{"arccos_overlap": 1, "nir": 190 + i, "elong": 1.5, "fill": 0.6, "turf_gap_m": 2} for i in range(10)]
+        lim = photo.learn_limits(known)
+        assert lim["learned_from"] == 10 and lim["nir_min"] == pytest.approx(185.45, abs=0.1)
+
+    def test_path_like_shape_is_not_a_bunker(self):
+        lim = dict(photo.DEFAULTS)
+        assert not photo.is_bunker({"nir": 150, "elong": 1.2, "fill": 0.6, "turf_gap_m": 2}, lim)  # too little infrared
+        assert not photo.is_bunker({"nir": 195, "elong": 8.0, "fill": 0.6, "turf_gap_m": 2}, lim)  # long and thin
+        assert photo.is_bunker({"nir": 195, "elong": 1.5, "fill": 0.6, "turf_gap_m": 2}, lim)
+
+
+class TestProcess:
+    def test_findings(self, course):
+        r = photo.process("test", overlays=False)
+        c = r["counts"]
+        assert c.get("bunker_matches_arccos") == 1
+        assert c.get("bunker_missing_from_arccos") == 1
+        assert c.get("arccos_bunker_no_sand_seen") == 1
+        assert c.get("native_grass", 0) >= 1
+        assert r["sand_model"]["learned"]
+
+    def test_missing_bunker_is_where_the_sand_is(self, course):
+        photo.process("test", overlays=False)
+        geo = json.loads((course / "output" / "layout" / "photo_surfaces.geojson").read_text())
+        missing = [f for f in geo["features"] if f["properties"]["finding"] == "bunker_missing_from_arccos"][0]
+        from pyproj import Transformer
+        t = Transformer.from_crs(4326, 32619, always_xy=True)
+        pts = [t.transform(x, y) for x, y in missing["geometry"]["coordinates"][0]]
+        ce = np.mean([p[0] for p in pts]) - E0
+        cs = N0 - np.mean([p[1] for p in pts])
+        assert ce == pytest.approx(69, abs=1.5) and cs == pytest.approx(65, abs=1.5)
+        assert missing["properties"]["area_m2"] == pytest.approx(100, rel=0.2)
+
+    def test_extras_merge_into_layout(self, course):
+        photo.process("test", write_extras=True, overlays=False)
+        extras = json.loads((course / "extra_surfaces.geojson").read_text())["features"]
+        assert {f["properties"]["surface"] for f in extras} == {"bunker", "native"}
+        r = layout.process_layout("test")
+        assert r["extra_surfaces"] == len(extras)
+        geo = json.loads((course / "output" / "layout" / "surfaces.geojson").read_text())
+        assert any(f["properties"]["surface"] == "native" for f in geo["features"])
+
+    def test_overlays_written(self, course):
+        photo.process("test")
+        assert (course / "output" / "layout" / "photo_check" / "hole_01.jpg").exists()
+
+    def test_needs_four_bands(self, course):
+        import rasterio
+        from rasterio.transform import from_origin
+        tif = course / "data" / "processed" / "textures" / "test_imagery.tif"
+        with rasterio.open(tif, "w", driver="GTiff", height=10, width=10, count=3, dtype="uint8",
+                           crs="EPSG:32619", transform=from_origin(E0, N0, PX, PX)) as ds:
+            ds.write(np.zeros((3, 10, 10), np.uint8))
+        with pytest.raises(ValueError):
+            photo.process("test", overlays=False)

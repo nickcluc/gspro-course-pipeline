@@ -47,6 +47,12 @@ config/course.json
        │  courses/<slug>/output/layout/
        │
 ┌──────────────────────────┐
+│  05b_photo_surfaces.py   │  aerial photo vs Arccos → missing bunkers, native grass
+└──────────────────────────┘
+       │
+       │  courses/<slug>/extra_surfaces.geojson (reviewed) → back into 05
+       │
+┌──────────────────────────┐
 │  06_blender_assembly.py  │  terrain + greens + layout → .blend + QA renders
 └──────────────────────────┘
        │
@@ -84,6 +90,10 @@ python pipeline/04_mesh_gen.py --course tedesco
 
 # Stage 5: Course layout from Arccos (run after Stage 1 so the SVG lines up with the terrain)
 python pipeline/05_layout.py --course tedesco
+
+# Stage 5b: Find bunkers and native grass Arccos is missing (needs Stage 3's 4-band photo)
+python pipeline/05b_photo_surfaces.py --course tedesco --write-extras
+python pipeline/05_layout.py --course tedesco   # rerun to include the reviewed extras
 
 # Stage 6: Blender assembly (inside Blender; add --render for per-hole QA images)
 blender --background --python pipeline/06_blender_assembly.py -- --course tedesco --render

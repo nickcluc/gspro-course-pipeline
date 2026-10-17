@@ -34,6 +34,7 @@ Run it after Stage 01 for the best result. Without the terrain, the SVG is frame
 | `courses/<slug>/data/raw/arccos/holes/hole_XX.json` | Arccos hole maps (Stage 00) | Yes |
 | `courses/<slug>/data/raw/arccos/rounds/*.json` | Your rounds (Stage 00 `--rounds`) | No: gives pins and real tee positions |
 | `courses/<slug>/data/processed/heightmaps/<slug>_terrain.tif` | Terrain (Stage 01) | No: frames the SVG and enables the height check |
+| `courses/<slug>/extra_surfaces.geojson` | Stage 05b, then reviewed by you | No: shapes Arccos lacks (missing bunkers, native grass), added to the layout |
 
 ---
 

@@ -4,7 +4,7 @@
 Builds the whole course as one Blender scene, from earlier stages' outputs:
 
   1. Terrain mesh (Stage 04 OBJ)
-  2. Every Arccos surface (green, fairway, tee, bunker, water, trees) draped
+  2. Every surface (green, fairway, tee, bunker, water, trees, native grass) draped
      onto the terrain, one object per shape, named h07_green, h12_bunker_03, ...
   3. PuttView green meshes (Stage 04), each turned and moved to best fit the
      Arccos outline of that green, and set to the terrain's height
@@ -53,13 +53,13 @@ from utils import REPO_ROOT, load_course_config  # noqa: E402
 SURFACE_LIFT_M = 0.03     # surfaces sit just above the terrain so they show in renders
 # Each surface type sits a little higher than the one under it, so overlaps don't flicker
 LAYER_STEP_M = 0.01
-LAYER_ORDER = ("fairway", "tee", "trees", "green", "bunker", "water")
+LAYER_ORDER = ("native", "fairway", "tee", "trees", "green", "bunker", "water")
 CAMERA_BACK_M = 40.0      # camera distance behind the tee
 CAMERA_UP_M = 25.0        # camera height above the tee (a flyover-style view)
 
 # Display colours for QA (the OPCD scheme used in Stage 05's SVG)
 COLOURS = {
-    "terrain": "#278438", "fairway": "#43E561", "tee": "#A0E5B8", "trees": "#164B20",
+    "terrain": "#278438", "native": "#8A7F3D", "fairway": "#43E561", "tee": "#A0E5B8", "trees": "#164B20",
     "green": "#BCE5A4", "bunker": "#E5E5AA", "water": "#0000C0", "green_puttview": "#7FD67F",
     "tee_marker": "#FFFFFF", "pin_marker": "#E03C31",
 }
