@@ -125,6 +125,34 @@ class TestPolygons:
         assert asm.polygon_centre([(0, 0), (4, 0), (4, 4), (0, 4)]) == pytest.approx((2, 2))
 
 
+def tri_area(ring, tris):
+    return sum(abs((ring[b][0] - ring[a][0]) * (ring[c][1] - ring[a][1])
+                   - (ring[c][0] - ring[a][0]) * (ring[b][1] - ring[a][1])) / 2 for a, b, c in tris)
+
+
+def ring_area(ring):
+    return abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]))) / 2
+
+
+class TestTriangulate:
+    def test_c_shape_is_covered_exactly(self):
+        # A band bent round a grass middle, like the water on Tedesco 14
+        c = [(0, 0), (30, 0), (30, 6), (6, 6), (6, 24), (30, 24), (30, 30), (0, 30)]
+        ring = asm.clean_ring(c)
+        tris = asm.triangulate(ring)
+        assert len(tris) == len(ring) - 2
+        assert tri_area(ring, tris) == pytest.approx(ring_area(ring))
+
+    def test_clockwise_and_repeated_points_are_handled(self):
+        sq = [(0, 0), (0, 4), (4, 4), (4, 4), (4, 0), (0, 0)]
+        ring = asm.clean_ring(sq)
+        assert len(ring) == 4 and tri_area(ring, asm.triangulate(ring)) == pytest.approx(16)
+
+    def test_l_shape(self):
+        ring = asm.clean_ring(L_SHAPE)
+        assert tri_area(ring, asm.triangulate(ring)) == pytest.approx(ring_area(ring))
+
+
 class TestGreens:
     def test_fit_finds_the_turn(self):
         outline = turn(L_SHAPE, 90, about=(15, 15), to=(0, 100))

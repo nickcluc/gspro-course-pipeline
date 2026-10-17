@@ -100,6 +100,7 @@ def load_extras(path: Path, project) -> tuple[list[dict], list[dict]]:
     Corrections you add by hand or accept from Stage 05b (courses/<slug>/extra_surfaces.geojson).
     Each feature is a WGS84 polygon with properties:
       {"surface": "bunker" | "native" | "penalty_area" | "green" | ..., "hole": 14}   adds a shape
+          (a penalty area can also carry "stakes": "red" or "yellow")
       {"action": "remove", "surface": "bunker", "hole": 14}                         removes every Arccos
           shape of that surface that mostly lies inside the polygon (or contains it)
     Returns (shapes to add, removals).
@@ -119,7 +120,7 @@ def load_extras(path: Path, project) -> tuple[list[dict], list[dict]]:
             out.append({"hole": int(p.get("hole") or 0), "index": 1000 + i, "arccos_type": None,
                         "arccos_name": "Extra (" + str(p.get("source") or "added") + ")",
                         "surface": p["surface"], "lonlat": ll, "en": [project(x, y) for x, y in ll],
-                        "note": p.get("note")})
+                        "note": p.get("note"), "stakes": p.get("stakes")})
     return out, removals
 
 
@@ -438,7 +439,8 @@ def build_holes(holes: list[dict], surfaces: list[dict], pins: dict, to_local, s
                      for p in pins.get(h["holeId"], [])],
             "surface_counts": dict(Counter(s["surface"] for s in hs)),
             # penalty areas are set as hazards in GreenKeeper, so they're listed here, not drawn as a surface
-            "penalty_areas": [{"points": [place(e, n) for e, n in s["en"]], "note": s.get("note")}
+            "penalty_areas": [{"stakes": s.get("stakes"), "points": [place(e, n) for e, n in s["en"]],
+                               "note": s.get("note")}
                               for s in hs if s["surface"] == "penalty_area"],
         })
     return out

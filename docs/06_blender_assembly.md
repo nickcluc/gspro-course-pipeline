@@ -79,7 +79,7 @@ Blender X = east and Y = north, in metres from the terrain centre (Stage 04's fr
 
 ### Surfaces
 
-Each outline gets extra points so no edge is longer than `--max-edge` (3 m by default). Blender fills it, subdivides long edges, and sets every vertex to the terrain height under it. Each surface type sits a little higher than the one below it (fairway, tee, trees, green, bunker, water, 1 cm apart), and overlapping shapes of one type are a few millimetres apart, so nothing flickers. A shape that appears on two holes' maps (Tedesco has 156, such as a shared pond) is built once.
+Each outline is cut into triangles by ear clipping, which stays inside curved and bent outlines (Blender's own ngon fill spilled outside them: hole 14's water band filled three times its real area). Blender then subdivides edges longer than `--max-edge` (3 m by default) and sets every vertex to the terrain height under it. All 421 Tedesco surfaces cover their outline area to within 1%. Each surface type sits a little higher than the one below it (fairway, tee, trees, green, bunker, water, 1 cm apart), and overlapping shapes of one type are a few millimetres apart, so nothing flickers. A shape that appears on two holes' maps (Tedesco has 156, such as a shared pond) is built once and shown on both holes. Penalty areas (from `extra_surfaces.geojson`) are drawn see-through red.
 
 ### Greens
 

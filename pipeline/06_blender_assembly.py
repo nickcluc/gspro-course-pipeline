@@ -175,6 +175,59 @@ def inside(x: float, y: float, poly: list) -> bool:
     return hit
 
 
+def clean_ring(points: list, tol: float = 1e-6) -> list[tuple[float, float]]:
+    """Drops repeated points and the closing point, and returns the ring counter-clockwise."""
+    out = []
+    for x, y in points:
+        if not out or math.dist(out[-1], (x, y)) > tol:
+            out.append((float(x), float(y)))
+    if len(out) > 1 and math.dist(out[0], out[-1]) <= tol:
+        out.pop()
+    area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(out, out[1:] + out[:1]))
+    return out if area > 0 else out[::-1]
+
+
+def triangulate(ring: list) -> list[tuple[int, int, int]]:
+    """
+    Ear-clipping triangulation of a simple polygon (counter-clockwise, no repeats).
+    Unlike Blender's automatic ngon fill, it never puts triangles outside a curved
+    or bent outline.
+    """
+    n = len(ring)
+    if n < 3:
+        return []
+    idx = list(range(n))
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def in_tri(p, a, b, c):
+        return cross(a, b, p) >= 0 and cross(b, c, p) >= 0 and cross(c, a, p) >= 0
+
+    tris = []
+    guard = 0
+    while len(idx) > 3 and guard < n * n:
+        guard += 1
+        clipped = False
+        for k in range(len(idx)):
+            i, j, l = idx[k - 1], idx[k], idx[(k + 1) % len(idx)]
+            a, b, c = ring[i], ring[j], ring[l]
+            if cross(a, b, c) <= 1e-12:  # reflex or flat corner: not an ear
+                continue
+            if any(in_tri(ring[m], a, b, c) for m in idx if m not in (i, j, l)):
+                continue
+            tris.append((i, j, l))
+            idx.pop(k)
+            clipped = True
+            break
+        if not clipped:  # numerically stuck: drop the flattest corner and carry on
+            k = min(range(len(idx)), key=lambda k: abs(cross(ring[idx[k - 1]], ring[idx[k]], ring[idx[(k + 1) % len(idx)]])))
+            idx.pop(k)
+    if len(idx) == 3:
+        tris.append(tuple(idx))
+    return tris
+
+
 def polygon_centre(poly: list) -> tuple[float, float]:
     a = cx = cy = 0.0
     for i in range(len(poly)):
@@ -294,12 +347,15 @@ def plan_scene(slug: str, max_edge_m: float = 3.0) -> dict:
         name = f"h{s['hole']:02d}_{s['surface']}"
         if totals[key] > 1:
             name += f"_{counts[key]:02d}"
-        ring = densify(s["points"], max_edge_m)
+        ring = clean_ring(s["points"])
+        tris = triangulate(ring)
+        if not tris:
+            continue
         nth = sum(1 for p in plan["surfaces"] if p["surface"] == s["surface"])
         h = lift(s["surface"], nth)
         spec = {
             "name": name, "hole": s["hole"], "also_holes": [], "surface": s["surface"], "lift_m": h,
-            "outline": [(x, y, sampler.height(x, y) + h) for x, y in ring],
+            "outline": [(x, y, sampler.height(x, y) + h) for x, y in ring], "triangles": tris,
         }
         seen[k] = spec
         plan["surfaces"].append(spec)
@@ -368,15 +424,18 @@ def _linear(c: float) -> float:
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
-def _material(bpy, name: str, hex_colour: str):
+def _material(bpy, name: str, hex_colour: str, alpha: float = 1.0):
     m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     r, g, b = (_linear(int(hex_colour[i:i + 2], 16) / 255) for i in (1, 3, 5))
-    m.diffuse_color = (r, g, b, 1.0)
+    m.diffuse_color = (r, g, b, alpha)
     m.use_nodes = True
     bsdf = m.node_tree.nodes.get("Principled BSDF")
     if bsdf:
         bsdf.inputs["Base Color"].default_value = (r, g, b, 1.0)
         bsdf.inputs["Roughness"].default_value = 0.9
+        bsdf.inputs["Alpha"].default_value = alpha
+    if alpha < 1.0 and hasattr(m, "surface_render_method"):
+        m.surface_render_method = "BLENDED"
     return m
 
 
@@ -392,17 +451,17 @@ def _mesh_object(bpy, name, verts, faces, collection, material=None):
 
 
 def _surface_object(bpy, bmesh, spec, sampler_fn, max_edge, collection, material):
+    """Builds the planned triangles, subdivides long edges, and re-drapes every vertex."""
     height = spec["lift_m"]
-    """Fills the draped outline, subdivides long edges, and re-drapes every vertex."""
     bm = bmesh.new()
     vs = [bm.verts.new(p) for p in spec["outline"]]
     try:
-        bm.faces.new(vs)
+        for a, b, c in spec["triangles"]:
+            bm.faces.new((vs[a], vs[b], vs[c]))
     except ValueError:
         bm.free()
         return None
-    bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method="BEAUTY", ngon_method="BEAUTY")
-    for _ in range(6):
+    for _ in range(8):
         long_edges = [e for e in bm.edges if e.calc_length() > max_edge]
         if not long_edges:
             break
@@ -433,7 +492,7 @@ def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "work
 
     tv, _ = read_obj(paths["terrain"])
     sampler = TerrainSampler(tv)
-    mats = {k: _material(bpy, k, c) for k, c in COLOURS.items()}
+    mats = {k: _material(bpy, k, c, 0.4 if k == "penalty_area" else 1.0) for k, c in COLOURS.items()}  # see-through hazard
 
     root = scene.collection
     terrain_col = bpy.data.collections.new("Terrain")
