@@ -68,6 +68,11 @@ Arccos maps only some of the woods. Tree pixels are told apart from turf and rou
 
 The check finds about 70% of the area Arccos already maps as trees, so its edges run a little inside the real tree line.
 
+Two things look like trees from above and are taken out:
+
+- **Shadows.** Tree shadow on grass is dark enough to pass as tree. The stage works out which way shadows fall in this photo (the direction in which Arccos's trees, shifted a few metres, land most often on dark pixels; west at Tedesco, so a morning photo). Dark, smooth pixels up to 12 m down-sun of a tree, and within 15 m of open grass, are dropped (a crown's shady side is dark too, but patchy, so it stays). The inside of woods is left alone.
+- **Roofs and paving.** Any tree patch whose typical plant signal is under 10 is dropped; real canopy is around 30.
+
 ### Native grass
 
 Native areas are browner and drier than the course's own turf: their red-to-green ratio is above the fairways' 99th percentile, and their plant signal below the fairways' 5th. The image is smoothed over 2 m first. Pavement (almost no plant signal), anything Arccos already maps, and anything more than 35 m from turf or bunkers is left out, and each area must be at least 150 m².
@@ -83,5 +88,6 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
 - 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 436 m² against Arccos's 268 m²
-- 227 tree areas Arccos doesn't map, most on the back nine (25 on hole 16)
+- 172 tree areas Arccos doesn't map: 123 on the back nine (24 on hole 16), 49 on the front, where Arccos already maps most single trees
+- 12,200 m² of tree shadow and 182 roof or paving patches taken out of the tree areas
 - Runs in about 2½ minutes

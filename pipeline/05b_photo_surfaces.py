@@ -266,6 +266,76 @@ def tree_mask(img, lab, px) -> tuple[np.ndarray, dict]:
     return tm, info
 
 
+SHADOW_REACH_M = 12.0     # tree shadows reach this far across the grass
+SHADOW_FROM_TURF_M = 15.0  # only shadows near open grass are checked, so the inside of woods stays
+ROOF_PLANT_MAX = 10.0     # a "tree" patch whose typical plant signal is below this is a roof or paving
+
+
+def shadow_direction(img, lab, px) -> tuple[float, float]:
+    """
+    The way shadows fall in this photo, as a unit (row, col) step: the direction in
+    which Arccos's trees, shifted 3 m, land most often on dark pixels.
+    """
+    arc = lab == LABELS["trees"]
+    turf = ndi.binary_erosion(lab == LABELS["turf"], iterations=5)
+    if arc.sum() < 100 or turf.sum() < 100:
+        return 0.0, 0.0
+    bright = img[:3].mean(0)
+    dark = (bright < np.percentile(bright[turf], 5)) & ~arc & (lab != LABELS["water"])
+    k = max(1, int(round(3.0 / px)))
+    best = (-1.0, 0.0, 0.0)
+    for a in np.radians(np.arange(0, 360, 15)):
+        dy, dx = int(round(-math.sin(a) * k)), int(round(math.cos(a) * k))
+        sh = np.roll(np.roll(arc, dy, 0), dx, 1) & ~arc
+        if sh.any():
+            share = float(dark[sh].mean())
+            if share > best[0]:
+                best = (share, dy / k, dx / k)
+    return best[1], best[2]
+
+
+def drop_shadows_and_roofs(img, lab, trees, px) -> tuple[np.ndarray, dict]:
+    """
+    Tree shadow on grass is dark enough to pass as tree, and so are dark roofs.
+    Shadow: dark, smooth pixels near open grass that lie down-sun of a tree (a crown's
+    shady side is dark too, but patchy). Roofs: patches with hardly any plant signal.
+    """
+    r, n = img[0], img[3]
+    bright = img[:3].mean(0)
+    plant = (n - r) / (n + r + 1e-6) * 100
+    dy, dx = shadow_direction(img, lab, px)
+    out = trees.copy()
+    removed_shadow = 0
+    if dy or dx:
+        casters = (lab == LABELS["trees"]) | trees
+        zone = np.zeros_like(trees)
+        for d in np.arange(1.0, SHADOW_REACH_M + 0.01, 1.0):
+            k = d / px
+            zone |= np.roll(np.roll(casters, int(round(dy * k)), 0), int(round(dx * k)), 1)
+        turf = lab == LABELS["turf"]
+        near_turf = ndi.binary_dilation(turf, iterations=int(SHADOW_FROM_TURF_M / px)) if turf.any() else turf
+        turf_mid = np.median(bright[ndi.binary_erosion(turf, iterations=5)]) if turf.sum() > 100 else 130.0
+        # shadow on mown grass is smooth; a tree crown, even its shady side, is patchy
+        tex = np.sqrt(np.maximum(ndi.uniform_filter(bright ** 2, 7) - ndi.uniform_filter(bright, 7) ** 2, 0))
+        core = ndi.binary_erosion(turf, iterations=5)
+        smooth = tex < (1.2 * np.percentile(tex[core], 90) if core.sum() > 100 else 8.0)
+        dark = out & zone & near_turf & (bright < 0.75 * turf_mid)
+        shadow = dark & smooth
+        # the texture window blurs about 1 m at the shadow's edges: take in dark pixels that close
+        shadow |= dark & ndi.binary_dilation(shadow, iterations=max(1, int(round(1.0 / px))))
+        removed_shadow = int(shadow.sum())
+        out &= ~shadow
+    lbl, k = ndi.label(out)
+    roofs = 0
+    if k:
+        med = ndi.median(plant, lbl, range(1, k + 1))
+        roof_ids = np.nonzero(np.asarray(med) < ROOF_PLANT_MAX)[0] + 1
+        roofs = len(roof_ids)
+        out &= ~np.isin(lbl, roof_ids)
+    return out, {"shadow_direction_row_col": [round(dy, 2), round(dx, 2)],
+                 "shadow_m2_removed": round(removed_shadow * px * px), "roof_patches_removed": roofs}
+
+
 def tiles(mask: np.ndarray, px: float, size_m: float):
     """Yields the mask cut into square tiles (so big woods give several small outlines)."""
     step = max(1, int(size_m / px))
@@ -579,6 +649,9 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
 
     trees, tree_info = tree_mask(img, lab, px)
     new_trees = trees & ~ndi.binary_dilation(lab == LABELS["trees"], iterations=max(1, int(2 / px)))
+    new_trees, cleanup = drop_shadows_and_roofs(img, lab, new_trees, px)
+    new_trees = ndi.binary_opening(new_trees, iterations=2)
+    tree_info.update(cleanup)
     for sub in tiles(new_trees, px, TREE_TILE_M):
         for ring in outlines(sub, tf, tol=1.0):
             area = abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]))) / 2

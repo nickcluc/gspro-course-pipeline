@@ -185,6 +185,33 @@ class TestProcess:
         assert g.sum() * PX * PX == pytest.approx(np.pi * 12 ** 2, rel=0.12)
         assert g[100, 131]  # 9.3 m right of centre, under the shadow (the watershed alone stops at 6.9 m)
 
+    def test_shadows_and_roofs_are_not_trees(self):
+        rng = np.random.default_rng(5)
+        img = np.zeros((4, 300, 300), np.float32)
+        img[:] = np.array(TURF, np.float32)[:, None, None]
+        lab = np.full((300, 300), photo.LABELS["turf"], np.uint8)
+        y, x = np.mgrid[:300, :300]
+        canopy = np.array((60, 85, 55, 165), np.float32)[:, None]
+        for cy, cx in ((80, 150), (220, 100), (220, 220)):  # three Arccos trees, each with a shadow to the west
+            t = np.hypot(x - cx, y - cy) < 15
+            img[:, t] = canopy
+            lab[t] = photo.LABELS["trees"]
+            sh = (np.hypot(x - cx + 20, y - cy) < 15) & ~t
+            img[:, sh] = np.array((55, 70, 45, 110), np.float32)[:, None]
+        roof = (abs(x - 40) < 10) & (abs(y - 40) < 10)
+        img[:, roof] = np.array((70, 72, 75, 72), np.float32)[:, None]
+        real = np.hypot(x - 260, y - 40) < 12  # a tree Arccos missed, no shadow drawn
+        img[:, real] = canopy
+        crowns = (lab == photo.LABELS["trees"]) | real
+        img += rng.normal(0, 2, img.shape).astype(np.float32)
+        img[:, crowns] += rng.normal(0, 22, (4, int(crowns.sum()))).astype(np.float32)  # crowns are patchy
+        shadow = (np.hypot(x - 130, y - 80) < 15) & (lab != photo.LABELS["trees"])
+        found = shadow | roof | real
+        kept, info = photo.drop_shadows_and_roofs(img, lab, found, PX)
+        assert info["shadow_direction_row_col"] == [0.0, -1.0]  # shadows fall west
+        assert kept[real].mean() > 0.95
+        assert kept[shadow].mean() < 0.25 and not kept[roof].any()  # slivers left go in the clean-up after
+
     def test_photo_outlines_replace_and_drop(self, course):
         photo.process("test", overlays=False)
         cfg = json.loads((course / "course.json").read_text())
