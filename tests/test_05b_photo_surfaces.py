@@ -136,6 +136,29 @@ class TestProcess:
         geo = json.loads((course / "output" / "layout" / "surfaces.geojson").read_text())
         assert any(f["properties"]["surface"] == "native" for f in geo["features"])
 
+    def test_write_extras_keeps_your_entries(self, course):
+        mine = {"type": "Feature", "properties": {"surface": "penalty_area", "hole": 1, "source": "member correction"},
+                "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [0, 0]]]}}
+        (course / "extra_surfaces.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [mine]}))
+        photo.process("test", write_extras=True, overlays=False)
+        photo.process("test", write_extras=True, overlays=False)  # twice: photo shapes replaced, not stacked
+        extras = json.loads((course / "extra_surfaces.geojson").read_text())["features"]
+        assert sum(f["properties"].get("source") == "member correction" for f in extras) == 1
+        assert sum(f["properties"].get("finding") == "bunker_missing_from_arccos" for f in extras) == 1
+
+    def test_tree_mask_finds_woods(self):
+        rng = np.random.default_rng(2)
+        img = np.zeros((4, 300, 300), np.float32)
+        img[:] = np.array(TURF, np.float32)[:, None, None]
+        img[:, :, 200:] = np.array((60, 80, 55, 150), np.float32)[:, None, None]  # dark, rough-textured woods
+        img += rng.normal(0, 3, img.shape).astype(np.float32)
+        img[:, :, 200:] += rng.normal(0, 25, (4, 300, 100)).astype(np.float32)
+        lab = np.zeros((300, 300), np.int16)
+        lab[:, :120] = photo.LABELS["turf"]
+        lab[:, 260:] = photo.LABELS["trees"]
+        mask, _ = photo.tree_mask(np.clip(img, 0, 255), lab, PX)
+        assert mask[:, 210:255].mean() > 0.8 and mask[:, :120].mean() < 0.05
+
     def test_photo_outlines_replace_and_drop(self, course):
         photo.process("test", overlays=False)
         cfg = json.loads((course / "course.json").read_text())

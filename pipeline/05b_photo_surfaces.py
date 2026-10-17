@@ -9,6 +9,7 @@ Checks the Arccos course map (Stage 00) against the NAIP aerial image
      smaller than the sand, or a few metres off)
   3. Arccos bunkers where the photo shows no sand (grassed over, or misplaced)
   4. Native / long-grass areas, which Arccos doesn't map at all
+  5. Woods Arccos doesn't map as trees (tree-lined holes play as rough otherwise)
 
 It calibrates itself on each course and photo: what sand looks like, and how
 big and how far from turf a bunker is, are learned from the pixels inside
@@ -27,11 +28,13 @@ Output:
     courses/<slug>/output/layout/photo_surfaces.geojson   every finding, WGS84
     courses/<slug>/output/layout/photo_check.json         what was learned, counts per hole
     courses/<slug>/output/layout/photo_check/hole_XX.jpg  photo with the findings drawn on
-    courses/<slug>/extra_surfaces.geojson                 (--write-extras) new bunkers and
-        native areas, to review and edit in QGIS; Stage 05 adds every shape in it
+    courses/<slug>/extra_surfaces.geojson                 (--write-extras) new bunkers, native
+        areas and trees, to review and edit in QGIS; Stage 05 adds every shape in it.
+        Your own entries (any source other than "aerial photo") are kept on rewrite.
 
 Overlay colours: yellow = Arccos bunker, green = sand matching it, red = bunker
-Arccos is missing, purple = native grass, white = fairway, blue = green.
+Arccos is missing, purple = native grass, blue fill = trees Arccos is missing,
+white = fairway, blue line = green.
 
 Dependencies:
     pip install rasterio numpy scipy pyproj pillow
@@ -203,6 +206,78 @@ def is_bunker(a: dict, lim: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Trees
+# ---------------------------------------------------------------------------
+
+TREE_FROM_TURF_M = 60.0   # woods are mapped this far from fairways, greens and tees
+MIN_TREE_M2 = 100.0
+TREE_TILE_M = 60.0        # big woods are cut into tiles so each outline stays small
+
+
+def _gauss_loglik(F: np.ndarray, mu: np.ndarray, cov: np.ndarray, chunk: int = 2_000_000) -> np.ndarray:
+    ic = np.linalg.inv(cov).astype(np.float32)
+    ld = float(np.linalg.slogdet(cov)[1])
+    X = F.reshape(F.shape[0], -1).T - mu.astype(np.float32)
+    out = np.empty(len(X), np.float32)
+    for i in range(0, len(X), chunk):
+        d = X[i:i + chunk]
+        out[i:i + chunk] = -0.5 * (np.einsum("ij,jk,ik->i", d, ic, d) + ld)
+    return out.reshape(F.shape[1:])
+
+
+def tree_mask(img, lab, px) -> tuple[np.ndarray, dict]:
+    """
+    Tree canopy, learned from the course itself: three models (Arccos tree areas,
+    fairway turf, and the rough strip 2–8 m outside fairways) on brightness, plant
+    signal, near-infrared and texture. A pixel is a tree where the tree model beats
+    both grass models. Texture keeps tree shadows on grass (smooth) from passing as trees.
+    """
+    r, g, b, n = img
+    bright = (r + g + b) / 3
+    ndvi = (n - r) / (n + r + 1e-6) * 100
+    tex = np.sqrt(np.maximum(ndi.uniform_filter(bright ** 2, 7) - ndi.uniform_filter(bright, 7) ** 2, 0))
+    sig = 1.0 / px
+    F = np.stack([ndi.gaussian_filter(v, sig) for v in (bright, ndvi, n, tex)]).astype(np.float32)
+    trees = ndi.binary_erosion(lab == LABELS["trees"], iterations=5)
+    turf = ndi.binary_erosion(lab == LABELS["turf"], iterations=5)
+    fw = lab == LABELS["turf"]
+    rough = (ndi.binary_dilation(fw, iterations=int(8 / px)) & ~ndi.binary_dilation(fw, iterations=int(2 / px))
+             & (lab == 0) & ~ndi.binary_dilation(lab == LABELS["trees"], iterations=int(3 / px)))
+    if min(trees.sum(), turf.sum(), rough.sum()) < 500:
+        return np.zeros(lab.shape, bool), {}
+
+    def model(m):
+        X = F[:, m][:, ::7]
+        return X.mean(1), np.cov(X) + np.eye(4) * 1e-3
+
+    (mt, ct), (mg, cg), (mr, cr) = model(trees), model(turf), model(rough)
+    tm = _gauss_loglik(F, mt, ct) > np.maximum(_gauss_loglik(F, mg, cg), _gauss_loglik(F, mr, cr))
+    tm = ndi.binary_closing(ndi.binary_opening(tm, iterations=3), iterations=3)
+    holes, k = ndi.label(~tm)  # fill small gaps in the canopy, but not enclosed rough corridors
+    if k:
+        small = ndi.sum(np.ones_like(holes), holes, index=range(1, k + 1)) * px * px < 50
+        tm |= np.isin(holes, np.nonzero(small)[0] + 1)
+    tm &= ~ndi.binary_dilation(np.isin(lab, (LABELS["turf"], LABELS["sand"], LABELS["water"])),
+                               iterations=max(1, int(1.0 / px)))
+    tm &= ndi.binary_dilation(lab == LABELS["turf"], iterations=int(TREE_FROM_TURF_M / px))
+    info = {"tree_model": np.round(mt, 1).tolist(), "turf_model": np.round(mg, 1).tolist(),
+            "rough_model": np.round(mr, 1).tolist(),
+            "share_of_arccos_trees_found": round(float(tm[lab == LABELS["trees"]].mean()), 3)}
+    return tm, info
+
+
+def tiles(mask: np.ndarray, px: float, size_m: float):
+    """Yields the mask cut into square tiles (so big woods give several small outlines)."""
+    step = max(1, int(size_m / px))
+    for r0 in range(0, mask.shape[0], step):
+        for c0 in range(0, mask.shape[1], step):
+            sub = np.zeros_like(mask)
+            sub[r0:r0 + step, c0:c0 + step] = mask[r0:r0 + step, c0:c0 + step]
+            if sub.any():
+                yield sub
+
+
+# ---------------------------------------------------------------------------
 # Native grass
 # ---------------------------------------------------------------------------
 
@@ -265,7 +340,7 @@ def simplify_ring(ring: list, tol: float) -> list:
     return a[:-1] + b[:-1]
 
 
-def outlines(mask: np.ndarray, transform) -> list[list[tuple[float, float]]]:
+def outlines(mask: np.ndarray, transform, tol: float = SIMPLIFY_M) -> list[list[tuple[float, float]]]:
     """Outer rings of a boolean mask, in the image CRS, simplified."""
     from rasterio.features import shapes
     rings = []
@@ -273,7 +348,7 @@ def outlines(mask: np.ndarray, transform) -> list[list[tuple[float, float]]]:
         if val != 1:
             continue
         ring = [tuple(p) for p in geom["coordinates"][0]]
-        ring = simplify_ring(ring, SIMPLIFY_M)
+        ring = simplify_ring(ring, tol)
         if len(ring) >= 3:
             rings.append(ring)
     return rings
@@ -358,6 +433,15 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
                 add(s["en"], {"finding": "arccos_bunker_no_sand_seen", "surface": "bunker",
                               "sand_share": round(float(share[i]), 2), "source": "Arccos"})
 
+    trees, tree_info = tree_mask(img, lab, px)
+    new_trees = trees & ~ndi.binary_dilation(lab == LABELS["trees"], iterations=max(1, int(2 / px)))
+    for sub in tiles(new_trees, px, TREE_TILE_M):
+        for ring in outlines(sub, tf, tol=1.0):
+            area = abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]))) / 2
+            if area >= MIN_TREE_M2:
+                add(ring, {"finding": "trees_missing_from_arccos", "surface": "trees", "area_m2": round(area, 1),
+                           "source": "aerial photo"})
+
     native, native_lim = native_mask(img, lab, px)
     for ring in outlines(native > 0, tf):
         area = abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]))) / 2
@@ -372,14 +456,21 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
     for f in feats:
         counts[f["properties"]["finding"]] = counts.get(f["properties"]["finding"], 0) + 1
     report = {"image": str(paths["imagery"].name), "pixel_m": px, "sand_model": {k: v for k, v in model.items() if k != "cov"},
-              "bunker_limits": lim, "native_limits": native_lim, "counts": counts,
+              "bunker_limits": lim, "native_limits": native_lim, "trees": tree_info, "counts": counts,
               "per_hole": {str(h): v for h, v in sorted(per_hole.items())}}
     (out / "photo_check.json").write_text(json.dumps(report, indent=2))
 
     if write_extras:
-        keep = [f for f in feats if f["properties"]["finding"] in ("bunker_missing_from_arccos", "native_grass")]
-        paths["extras"].write_text(json.dumps({"type": "FeatureCollection", "features": keep}, indent=1))
+        # Your own corrections stay; only earlier photo findings are replaced
+        mine = []
+        if paths["extras"].exists():
+            mine = [f for f in json.loads(paths["extras"].read_text()).get("features") or []
+                    if (f.get("properties") or {}).get("source") != "aerial photo"]
+        keep = [f for f in feats if f["properties"]["finding"] in
+                ("bunker_missing_from_arccos", "native_grass", "trees_missing_from_arccos")]
+        paths["extras"].write_text(json.dumps({"type": "FeatureCollection", "features": mine + keep}, indent=1))
         report["extras_written"] = len(keep)
+        report["extras_kept"] = len(mine)
     if overlays:
         draw_overlays(img, tf, surfaces, feats, epsg, out / "photo_check")
     return report
@@ -394,7 +485,8 @@ def draw_overlays(img, tf, surfaces, feats, epsg, out_dir: Path, max_px: int = 1
     inv = ~tf
     rgb = np.clip(np.moveaxis(img[:3], 0, -1), 0, 255).astype(np.uint8)
     colours = {"bunker_matches_arccos": (0, 220, 0), "bunker_missing_from_arccos": (255, 30, 30),
-               "arccos_bunker_no_sand_seen": (255, 140, 0), "native_grass": (170, 60, 240)}
+               "arccos_bunker_no_sand_seen": (255, 140, 0), "native_grass": (170, 60, 240),
+               "trees_missing_from_arccos": (0, 90, 255)}
     edge = {"green": (40, 120, 255), "fairway": (255, 255, 255), "tee": (255, 0, 255), "bunker": (255, 230, 0)}
     for hole in sorted({s["hole"] for s in surfaces}):
         mine = [s for s in surfaces if s["hole"] == hole and s["surface"] in edge]
@@ -436,7 +528,8 @@ def main():
     for k, v in sorted(r["counts"].items()):
         print(f"  {k}: {v}")
     if "extras_written" in r:
-        print(f"  Wrote {r['extras_written']} shapes to extra_surfaces.geojson; review them in QGIS")
+        print(f"  Wrote {r['extras_written']} photo shapes to extra_surfaces.geojson (kept {r['extras_kept']} of yours); "
+              f"review them in QGIS")
 
 
 if __name__ == "__main__":

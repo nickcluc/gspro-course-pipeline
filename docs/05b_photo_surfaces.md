@@ -1,4 +1,4 @@
-# Stage 05b: Photo check (bunkers and native grass)
+# Stage 05b: Photo check (bunkers, native grass and trees)
 
 **Script:** `pipeline/05b_photo_surfaces.py`
 
@@ -14,6 +14,7 @@ Checks the Arccos map against the NAIP aerial photo from Stage 03, which has red
 | `bunker_matches_arccos` | Sand matching an Arccos bunker; its photo outline is usually more accurate than Arccos's | green |
 | `arccos_bunker_no_sand_seen` | An Arccos bunker with grass in the photo: grassed over or misplaced | orange |
 | `native_grass` | Brown, dry long-grass areas, which Arccos doesn't map | purple |
+| `trees_missing_from_arccos` | Woods near the holes that Arccos doesn't map | blue |
 
 The shapes you accept go into `courses/<slug>/extra_surfaces.geojson`. Stage 05 adds every shape in that file to the layout, so stages 05 and 06 include them on every rebuild.
 
@@ -28,7 +29,7 @@ python pipeline/05b_photo_surfaces.py --course tedesco --write-extras   # also s
 python pipeline/05_layout.py --course tedesco                      # layout now includes the extras
 ```
 
-Review `extra_surfaces.geojson` in QGIS over the photo: delete anything wrong, fix edges, and add what was missed. Each shape needs the properties `surface` (`bunker`, `native`, `green`, `fairway`, `tee`, `water` or `trees`) and `hole`. Running `--write-extras` again overwrites the file, so do it only before you start editing.
+Review `extra_surfaces.geojson` in QGIS over the photo: delete anything wrong, fix edges, and add what was missed. Each shape needs the properties `surface` (`bunker`, `native`, `green`, `fairway`, `tee`, `water` or `trees`) and `hole`. Running `--write-extras` again replaces only the shapes it wrote before (those with `source: "aerial photo"`). Your own entries, such as corrections, are kept. To keep a photo shape you edited, change its `source`.
 
 ---
 
@@ -49,6 +50,12 @@ The limits that separate bunkers from look-alikes are also learned, from the san
 
 Areas must also be 15–3,000 m² and at least 2.5 m wide. With fewer than 8 matching bunkers, the stage uses those Tedesco values as defaults.
 
+### Trees
+
+Arccos maps only some of the woods. Tree pixels are told apart from turf and rough by three models learned from the course: the Arccos tree areas, the fairways, and a rough strip 2–8 m outside the fairways. Each model uses brightness, plant signal, near-infrared and texture (trees are darker and patchier than grass). Each pixel goes to the closest model. The result is cleaned up, gaps under 50 m² are filled, and anything already mapped as turf, sand or water is left out. Only woods within 60 m of turf are kept, and each area must be at least 100 m². Large areas are cut into 60 m tiles so each piece stays a simple shape.
+
+The check finds about 70% of the area Arccos already maps as trees, so its edges run a little inside the real tree line.
+
 ### Native grass
 
 Native areas are browner and drier than the course's own turf: their red-to-green ratio is above the fairways' 99th percentile, and their plant signal below the fairways' 5th. The image is smoothed over 2 m first. Pavement (almost no plant signal), anything Arccos already maps, and anything more than 35 m from turf or bunkers is left out, and each area must be at least 150 m².
@@ -63,4 +70,5 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 17 bunkers missing from Arccos, including the fairway bunker left of hole 1 in front of the trees, and four around hole 2's green
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
-- Runs in about a minute
+- 227 tree areas Arccos doesn't map, most on the back nine (25 on hole 16)
+- Runs in about 2½ minutes
