@@ -210,7 +210,9 @@ def is_bunker(a: dict, lim: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 TREE_FROM_TURF_M = 60.0   # woods are mapped this far from fairways, greens and tees
-MIN_TREE_M2 = 100.0
+MIN_TREE_M2 = 30.0      # a single tree about 6 m across
+BIG_TREE_M2 = 100.0     # smaller than this, a patch must stand clear of Arccos's trees
+LONE_TREE_CLEAR_M = 4.0
 TREE_TILE_M = 60.0        # big woods are cut into tiles so each outline stays small
 
 
@@ -652,6 +654,15 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
     new_trees, cleanup = drop_shadows_and_roofs(img, lab, new_trees, px)
     new_trees = ndi.binary_opening(new_trees, iterations=2)
     tree_info.update(cleanup)
+    # A small patch counts only as a lone tree, standing clear of Arccos's trees;
+    # next to them it's just the edge of a crown Arccos already has
+    clear_of_arccos = ndi.distance_transform_edt(lab != LABELS["trees"]) * px >= LONE_TREE_CLEAR_M
+    lbl, k = ndi.label(new_trees)
+    if k:
+        size = ndi.sum(np.ones_like(lbl), lbl, range(1, k + 1)) * px * px
+        touching = np.asarray(ndi.minimum(clear_of_arccos, lbl, range(1, k + 1))) == 0
+        drop = np.nonzero((size < BIG_TREE_M2) & touching)[0] + 1
+        new_trees &= ~np.isin(lbl, drop)
     for sub in tiles(new_trees, px, TREE_TILE_M):
         for ring in outlines(sub, tf, tol=1.0):
             area = abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]))) / 2

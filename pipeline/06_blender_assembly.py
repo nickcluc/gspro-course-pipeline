@@ -53,6 +53,7 @@ from utils import REPO_ROOT, load_course_config  # noqa: E402
 SURFACE_LIFT_M = 0.03     # surfaces sit just above the terrain so they show in renders
 # Each surface type sits a little higher than the one under it, so overlaps don't flicker
 LAYER_STEP_M = 0.01
+ALWAYS_SHOWN = ("trees", "native")  # drawn in every hole's renders, whichever hole Arccos files them under
 LAYER_ORDER = ("native", "fairway", "tee", "trees", "green", "bunker", "water", "penalty_area")
 CAMERA_BACK_M = 40.0      # camera distance behind the tee
 CAMERA_UP_M = 25.0        # camera height above the tee (a flyover-style view)
@@ -525,6 +526,12 @@ def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "work
             continue
         for n in spec.get("also_holes") or []:  # shared shapes also belong to the other holes' collections
             hole_col(n).objects.link(obj)
+        if spec["surface"] in ALWAYS_SHOWN:
+            # Arccos files many trees under a neighbouring hole: keep them in every render
+            if "always" not in hole_cols:
+                hole_cols["always"] = bpy.data.collections.new("Trees and native (all holes)")
+                root.children.link(hole_cols["always"])
+            hole_cols["always"].objects.link(obj)
     for g in plan["greens"]:
         _mesh_object(bpy, g["name"], g["verts"], g["faces"], hole_col(g["hole"]), mats["green_puttview"])
     drawn: list = []
@@ -564,9 +571,9 @@ def build_scene(slug: str, plan: dict, render: bool = False, engine: str = "work
         cam.data.clip_end = 5000
         hole_col(c["hole"]).objects.link(cam)
         if render:
-            # Renders show only this hole's shapes on the terrain, so neighbouring holes don't crowd them
+            # Renders show this hole's shapes, plus every tree and native area, on the terrain
             for n, col in hole_cols.items():
-                col.hide_render = n != c["hole"]
+                col.hide_render = n not in (c["hole"], "always")
         if render and "tee" in views:
             renders.mkdir(parents=True, exist_ok=True)
             scene.camera = cam

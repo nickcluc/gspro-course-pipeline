@@ -64,7 +64,7 @@ Arccos's own middle always stays in. Turn on `greens_from_photo` in `course.json
 
 ### Trees
 
-Arccos maps only some of the woods. Tree pixels are told apart from turf and rough by three models learned from the course: the Arccos tree areas, the fairways, and a rough strip 2–8 m outside the fairways. Each model uses brightness, plant signal, near-infrared and texture (trees are darker and patchier than grass). Each pixel goes to the closest model. The result is cleaned up, gaps under 50 m² are filled, and anything already mapped as turf, sand or water is left out. Only woods within 60 m of turf are kept, and each area must be at least 100 m². Large areas are cut into 60 m tiles so each piece stays a simple shape.
+Arccos maps only some of the woods. Tree pixels are told apart from turf and rough by three models learned from the course: the Arccos tree areas, the fairways, and a rough strip 2–8 m outside the fairways. Each model uses brightness, plant signal, near-infrared and texture (trees are darker and patchier than grass). Each pixel goes to the closest model. The result is cleaned up, gaps under 50 m² are filled, and anything already mapped as turf, sand or water is left out. Only woods within 60 m of turf are kept. An area must be at least 30 m² (a single tree about 6 m across); under 100 m² it must also stand 4 m clear of Arccos's trees, because next to them it's only the edge of a crown Arccos already has. Large areas are cut into 60 m tiles so each piece stays a simple shape.
 
 The check finds about 70% of the area Arccos already maps as trees, so its edges run a little inside the real tree line.
 
@@ -88,6 +88,6 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
 - 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 436 m² against Arccos's 268 m²
-- 172 tree areas Arccos doesn't map: 123 on the back nine (24 on hole 16), 49 on the front, where Arccos already maps most single trees
+- 231 tree areas Arccos doesn't map: 151 on the back nine (29 on hole 16), 80 on the front, where Arccos already maps most single trees
 - 12,200 m² of tree shadow and 182 roof or paving patches taken out of the tree areas
 - Runs in about 2½ minutes
