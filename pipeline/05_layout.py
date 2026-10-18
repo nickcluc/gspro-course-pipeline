@@ -68,7 +68,9 @@ OPCD = {
     "green": ("golf.green", "#BCE5A4", 90),
     "bunker": ("golf.bunker", "#E5E5AA", 100),
     "water": ("golf.water_hazard", "#0000C0", 110),
-    "native": ("natural.scrub", "#8A7F3D", 55),  # long native grass; check its OPCD class
+    # Long native grass shares the wood colour: Clender makes #164B20 into OPCD's "Deep" rough,
+    # which is how native fescue plays. Change it if the OPCD V4 palette has a better type.
+    "native": ("natural.scrub", "#164B20", 55),
 }
 ROUGH = ("leisure.golf_course", "#278438")
 
@@ -394,17 +396,26 @@ def svg_frame(surfaces: list[dict], spatial: dict | None, margin_m: float = 40.0
 
 
 def write_svg(surfaces: list[dict], frame: dict, path: Path, label: str) -> Path:
-    """OPCD-coloured SVG, 1 mm = 1 m, north up, one Inkscape layer per surface."""
+    """
+    OPCD-coloured Inkscape SVG, 1 mm = 1 m, north up, one Inkscape layer per surface.
+    A shape may carry "interiors" (rings cut out of it); those paths use the even-odd rule.
+    """
     w, h = frame["xmax"] - frame["xmin"], frame["ymax"] - frame["ymin"]
     groups = {}
     for s in surfaces:
         if s["surface"] in OPCD:
             groups.setdefault(s["surface"], []).append(s)
+
+    def ring_d(pts):
+        return "M" + " L".join(f"{e - frame['xmin']:.2f},{frame['ymax'] - n:.2f}" for e, n in pts) + " Z"
+
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+        f'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" '
         f'width="{w:.2f}mm" height="{h:.2f}mm" viewBox="0 0 {w:.2f} {h:.2f}">',
         f"<!-- {label}. Top-left = ({frame['xmin']:.2f} E, {frame['ymax']:.2f} N). 1 unit = 1 m. -->",
+        '<sodipodi:namedview id="namedview" inkscape:document-units="mm" units="mm"/>',
         f'<g inkscape:groupmode="layer" id="layer-rough" inkscape:label="{ROUGH[0]}">'
         f'<rect id="{ROUGH[0]}-0" x="0" y="0" width="{w:.2f}" height="{h:.2f}" fill="{ROUGH[1]}" stroke="none"/></g>',
     ]
@@ -412,8 +423,10 @@ def write_svg(surfaces: list[dict], frame: dict, path: Path, label: str) -> Path
         cls, fill, _ = OPCD[surface]
         lines.append(f'<g inkscape:groupmode="layer" id="layer-{cls}" inkscape:label="{cls}">')
         for s in groups[surface]:
-            d = "M" + " L".join(f"{e - frame['xmin']:.2f},{frame['ymax'] - n:.2f}" for e, n in s["en"]) + " Z"
-            lines.append(f'<path id="{cls}-hole{s["hole"]}-{s["index"]}" d="{d}" fill="{fill}" stroke="none"/>')
+            rings = [s["en"]] + s.get("interiors", [])
+            rule = ' fill-rule="evenodd"' if len(rings) > 1 else ""
+            d = " ".join(ring_d(r) for r in rings)
+            lines.append(f'<path id="{cls}-hole{s["hole"]}-{s["index"]}" d="{d}" fill="{fill}"{rule} stroke="none"/>')
         lines.append("</g>")
     lines.append("</svg>")
     path.write_text("\n".join(lines))

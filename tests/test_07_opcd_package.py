@@ -112,3 +112,92 @@ def test_needs_terrain(course):
     (course / "data" / "processed" / "heightmaps" / "test_terrain.tif").unlink()
     with pytest.raises(FileNotFoundError, match="01_lidar"):
         opcd.build_package("test")
+
+
+def test_clender_shapes_merge_by_colour_and_skip_unknown_colours(monkeypatch):
+    monkeypatch.setitem(layout.OPCD, "cartpath", ("golf.cartpath", "#123456", 45))  # a colour Clender doesn't know
+    sq = {"west": 0.0, "south": 0.0, "east": 512.0, "north": 512.0}
+    sq_ring = lambda x0, y0, x1, y1: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]  # noqa: E731
+    surfaces = [
+        {"hole": 1, "surface": "trees", "index": 0, "en": sq_ring(100, 100, 200, 200)},
+        {"hole": 2, "surface": "trees", "index": 1, "en": sq_ring(150, 150, 250, 250)},   # overlaps the first
+        {"hole": 2, "surface": "trees", "index": 2, "en": sq_ring(100, 100, 200, 200)},   # duplicate on another hole
+        {"hole": 3, "surface": "native", "index": 3, "en": sq_ring(240, 120, 300, 160)},  # same colour, overlaps
+        {"hole": 1, "surface": "bunker", "index": 4, "en": [(10, 10), (40, 40), (40, 10), (10, 40)]},  # bow-tie
+        {"hole": 1, "surface": "cartpath", "index": 5, "en": sq_ring(300, 300, 350, 350)},
+        {"hole": 1, "surface": "green", "index": 6, "en": sq_ring(500, 500, 600, 600)},   # half outside the square
+    ]
+    shapes, report = opcd.clender_shapes(surfaces, sq)
+    deep = [s for s in shapes if layout.OPCD[s["surface"]][1] == "#164B20"]
+    assert len(deep) == 1 and deep[0]["surface"] == "trees" and deep[0]["hole"] == "1_2_3"
+    assert report["surfaces"]["trees"]["includes"] == ["native", "trees"]
+    assert report["surfaces"]["trees"]["overlap_merged_m2"] == pytest.approx(10000 + 2500 + 100)
+    assert report["surfaces"]["bunker"]["repaired"] == 1
+    assert "cartpath" in report["skipped_colours"] and not any(s["surface"] == "cartpath" for s in shapes)
+    green = next(s for s in shapes if s["surface"] == "green")
+    assert max(e for e, _ in green["en"]) <= 512 and max(n for _, n in green["en"]) <= 512
+
+
+def test_clender_shapes_join_shapes_touching_at_a_corner():
+    # Two tree areas meeting at one point made Clender report a gap at Tedesco (holes 6 and 12)
+    sq = {"west": 0.0, "south": 0.0, "east": 512.0, "north": 512.0}
+    a = [(100, 100), (150, 100), (150, 150), (100, 150)]
+    b = [(150, 150), (200, 150), (200, 200), (150, 200)]
+    c = [(300, 100), (350, 100), (350, 150), (300, 150)]   # 5 m away: stays separate
+    surfaces = [{"hole": i, "surface": "trees", "index": i, "en": r} for i, r in enumerate([a, b, c])]
+    shapes, report = opcd.clender_shapes(surfaces, sq)
+    assert len(shapes) == 2
+    assert report["surfaces"]["trees"]["gaps_closed_m2"] < 1.0  # outlines barely move
+    unclosed, _ = opcd.clender_shapes(surfaces, sq, close_m=0)
+    assert len(unclosed) == 3
+
+
+def test_clender_shapes_keep_holes():
+    # four strips round a 40 m gap merge into one shape with a hole
+    sq = {"west": 0.0, "south": 0.0, "east": 512.0, "north": 512.0}
+    surfaces = [{"hole": 1, "surface": "trees", "index": i, "en": r} for i, r in enumerate([
+        [(0, 0), (100, 0), (100, 30), (0, 30)], [(0, 70), (100, 70), (100, 100), (0, 100)],
+        [(0, 0), (30, 0), (30, 100), (0, 100)], [(70, 0), (100, 0), (100, 100), (70, 100)]])]
+    shapes, _ = opcd.clender_shapes(surfaces, sq)
+    assert len(shapes) == 1 and len(shapes[0]["interiors"]) == 1
+    frame = {"xmin": 0, "ymin": 0, "xmax": 512, "ymax": 512}
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        svg = layout.write_svg(shapes, frame, Path(d) / "t.svg", "t").read_text()
+    assert 'fill-rule="evenodd"' in svg and svg.count(" Z") == 2 and "sodipodi:namedview" in svg
+
+
+def test_terrain_obj_matches_the_heightmap(course):
+    r = opcd.build_package("test", obj_step=8)
+    out, sq, hm = course / "output" / "opcd", r["square"], r["heightmap"]
+    lines = (out / "test_terrain_opcd.obj").read_text().splitlines()
+    verts = np.array([[float(v) for v in ln.split()[1:]] for ln in lines if ln.startswith("v ")])
+    n = 512 // 8 + 1
+    assert r["obj"]["vertices"] == len(verts) == n * n
+    assert sum(ln.startswith("f ") for ln in lines) == 2 * (n - 1) ** 2
+    # Clender's frame, Y-up: -x = east, y = height above base, z = north
+    for x, y, z in verts[[0, n - 1, -1]]:
+        assert y == pytest.approx(plane(sq["west"] - x, sq["south"] + z) - hm["base_m"], abs=0.02)
+    assert verts[:, 0].min() == -512 and verts[:, 2].max() == 512
+
+
+def test_opcd_terrain_square_from_course_json(course):
+    from pyproj import Transformer
+    lon, lat = Transformer.from_crs(EPSG, 4326, always_xy=True).transform(W0 + 420, S0 + 450)
+    cfg = json.loads((course / "course.json").read_text())
+    cfg["opcd"] = {"terrain": {"center_lat": lat, "center_lon": lon, "size_m": 600}}
+    (course / "course.json").write_text(json.dumps(cfg))
+    out = course / "output" / "opcd"
+    out.mkdir(parents=True)
+    (out / "test_heightmap_513.raw").write_bytes(b"old")
+    r = opcd.build_package("test", obj_step=10)
+    sq = r["square"]
+    assert sq["size_m"] == 600 and sq["west"] == pytest.approx(W0 + 120, abs=0.01)
+    assert r["raw"] is None and not (out / "test_heightmap_513.raw").exists()
+    assert not (out / "unity_terrain.json").exists()
+    assert r["margins"]["west"] == round(W0 + 400 - sq["west"])
+    tee = json.loads((out / "greenkeeper.json").read_text())["holes"][0]["tees"][0]
+    assert tee["x"] == pytest.approx(W0 + 420 - sq["west"], abs=0.01)
+    assert tee["y"] == pytest.approx(plane(W0 + 420, S0 + 290), abs=0.02)  # real elevation
+    assert 'width="600.00mm"' in (out / "test_clender.svg").read_text()
+    assert "OPCD web app" in (out / "README.md").read_text()

@@ -33,5 +33,13 @@
     "rough_in_front_of_green": [6, 8, 12, 13],
     "runup_greenside_only_yd": {"9": 30},
     "drop_bunkers_without_sand": false
+  },
+  "opcd": {
+    "terrain": {
+      "source": "OPCD web app lidar tool (inner terrain)",
+      "center_lat": 42.48031,
+      "center_lon": -70.89911,
+      "size_m": 2000
+    }
   }
 }

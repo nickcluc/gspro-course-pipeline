@@ -11,6 +11,9 @@ opencv-python
 pytesseract
 pillow
 
+# Clender shape cleanup (Stage 7)
+shapely
+
 # Mesh generation (Stage 4)
 trimesh
 
