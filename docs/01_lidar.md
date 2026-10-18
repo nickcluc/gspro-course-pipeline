@@ -127,3 +127,18 @@ pip install requests rasterio scipy pyproj
 PDAL must be installed system-wide (not via pip):
 - macOS: `brew install pdal`
 - Full install docs: https://pdal.io/en/stable/install.html
+
+---
+
+## Without PDAL: USGS's 1 m DEM (`--source dem`)
+
+USGS also publishes a 1 m bare-earth DEM built from the same 3DEP Lidar, already ground-classified. With `--source dem` (the default when `pdal` isn't installed), the stage finds the newest survey's DEM tiles for the course through the same TNM API and reads only the course's area straight from the cloud-hosted GeoTIFFs. Nothing large is downloaded and PDAL isn't needed, and the output is the same `<slug>_terrain.tif` at `target_resolution_m`.
+
+```bash
+python pipeline/01_lidar.py --course tedesco --source dem      # 1 m DEM (seconds)
+python pipeline/01_lidar.py --course tedesco --source points   # raw point cloud through PDAL
+```
+
+Tedesco: one tile from MA_CentralEastern_2021_B21 covers the whole course; built in about 7 seconds. Stage 05's height check against Arccos's own elevation points comes out 4 cm apart on average.
+
+Point-cloud downloads now go into a `.part` file, resume where they stopped, and fetch four tiles at a time; USGS's download server can be very slow or unreachable.
