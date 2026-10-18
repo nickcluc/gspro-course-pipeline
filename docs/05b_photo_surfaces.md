@@ -99,7 +99,7 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
 - 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 436 m² against Arccos's 268 m²
-- Fairway in front of the green on 14 holes, about 13,300 m² in all, including the par 3s 3 and 7; none on 6, 8, 12 and 13, which have rough in front
+- Fairway in front of the green on 14 holes, about 10,600 m² in all, including the par 3s 3 and 7; none on 6, 8, 12 and 13, which have rough in front
 - 231 tree areas Arccos doesn't map: 151 on the back nine (29 on hole 16), 80 on the front, where Arccos already maps most single trees
 - 12,200 m² of tree shadow and 182 roof or paving patches taken out of the tree areas
 - Runs in about 2½ minutes
