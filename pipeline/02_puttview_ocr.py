@@ -404,10 +404,15 @@ def process_page(
 
     print(f"  OCR: {valid_cells}/{total_cells} cells read ({valid_cells/max(total_cells,1)*100:.0f}%)")
 
+    # The green's edge, in the same yards frame as the points (x right, y down the page)
+    edge = cv2.approxPolyDP(green_contour, 0.3 * px_per_yard, True).reshape(-1, 2)
+    outline = [[round((x - origin_x) / px_per_yard, 2), round((y - origin_y) / px_per_yard, 2)] for x, y in edge]
+
     return {
         "hole": hole_num,
         "grid_spacing_yards": grid_spacing_yards,
         "px_per_yard": round(px_per_yard, 2),
+        "outline_yards": outline,
         "points": points
     }
 

@@ -61,6 +61,7 @@ python pipeline/02_puttview_ocr.py --course tedesco --scans-dir scans/ --px-per-
   "hole": 1,
   "grid_spacing_yards": 3,
   "px_per_yard": 18.4,
+  "outline_yards": [[2.1, 0.4], [14.8, 0.0], ...],
   "points": [
     { "x": 6.0, "y": 3.0, "elevation_ft": 3.4 },
     { "x": 6.0, "y": 6.0, "elevation_ft": 3.8 },
@@ -69,7 +70,7 @@ python pipeline/02_puttview_ocr.py --course tedesco --scans-dir scans/ --px-per-
 }
 ```
 
-`x` and `y` are in yards from the grid origin (lower-left of the bounding box). `elevation_ft` is absolute elevation from PuttView (0–10 feet range).
+`x` and `y` are in yards from the grid origin (top-left of the green's bounding box, y down the page). `outline_yards` is the green's edge in the same frame; Stage 05 uses it as the green's shape. `elevation_ft` is absolute elevation from PuttView (0–10 feet range).
 
 ---
 

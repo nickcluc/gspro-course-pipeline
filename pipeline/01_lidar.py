@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import requests
@@ -144,33 +145,49 @@ def print_products(items: list[dict]):
 # Download
 # ---------------------------------------------------------------------------
 
+DOWNLOAD_WORKERS = 4   # tiles fetched at once; USGS serves each connection slowly
+DOWNLOAD_TRIES = 8
+
+
 def download_file(url: str, dest: Path) -> Path:
     """
     Downloads a file from url to dest directory. Returns path to downloaded file.
-    Skips if already exists.
+    Skips if already complete. Downloads into a .part file and renames it only when
+    complete, so an interrupted download is resumed (HTTP Range) on the next try or
+    the next run, instead of a half file being mistaken for a finished one.
     """
     filename = url.split("/")[-1].split("?")[0]
     out_path = dest / filename
 
     if out_path.exists():
-        print(f"  Already exists, skipping: {out_path.name}")
+        print(f"  Already exists, skipping: {out_path.name}", flush=True)
         return out_path
 
-    print(f"  Downloading {filename}...")
     dest.mkdir(parents=True, exist_ok=True)
-
-    with requests.get(url, stream=True, timeout=300) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        downloaded = 0
-        with open(out_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total:
-                    pct = downloaded / total * 100
-                    print(f"    {pct:.1f}%", end="\r")
-    print(f"  Done: {out_path.name} ({downloaded / 1024 / 1024:.1f} MB)")
+    part = out_path.with_name(out_path.name + ".part")
+    for attempt in range(1, DOWNLOAD_TRIES + 1):
+        have = part.stat().st_size if part.exists() else 0
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        try:
+            with requests.get(url, stream=True, timeout=(30, 60), headers=headers) as r:
+                if r.status_code == 416:  # nothing left to fetch
+                    break
+                r.raise_for_status()
+                resumed = r.status_code == 206
+                total = int(r.headers.get("content-length", 0)) + (have if resumed else 0)
+                with open(part, "ab" if resumed else "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):
+                        f.write(chunk)
+            if not total or part.stat().st_size >= total:
+                break
+        except requests.RequestException as e:
+            print(f"  {filename}: connection dropped ({e.__class__.__name__}), "
+                  f"resuming ({attempt}/{DOWNLOAD_TRIES})", flush=True)
+            time.sleep(min(60, 5 * attempt))
+    else:
+        raise RuntimeError(f"Couldn't download {filename}; run again to resume.")
+    part.rename(out_path)
+    print(f"  Done: {out_path.name} ({out_path.stat().st_size / 1024 / 1024:.1f} MB)", flush=True)
     return out_path
 
 
@@ -271,6 +288,86 @@ def run_pdal_pipeline(pipeline: dict) -> bool:
 # Post-processing — fill voids, smooth
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# USGS 1 m DEM — the bare-earth surface USGS already made from the same Lidar
+# ---------------------------------------------------------------------------
+
+DEM_DATASET = "Digital Elevation Model (DEM) 1 meter"
+NODATA = -9999.0
+
+
+def _project_of(item: dict) -> str:
+    """The 3DEP project a tile belongs to, from its download URL (.../Projects/<name>/...)."""
+    parts = item.get("downloadURL", "").split("/")
+    return parts[parts.index("Projects") + 1] if "Projects" in parts else item.get("title", "")
+
+
+def select_dem_tiles(items: list[dict]) -> list[dict]:
+    """GeoTIFF tiles from the most recently published project (the newest Lidar survey)."""
+    tifs = [i for i in items if (i.get("format") or "").lower() == "geotiff" and i.get("downloadURL")]
+    if not tifs:
+        return []
+    newest = max(tifs, key=lambda i: i.get("publicationDate") or "")
+    project = _project_of(newest)
+    return [i for i in tifs if _project_of(i) == project]
+
+
+def build_from_dem(bbox: dict, output_tif: Path, resolution_m: float, epsg_out: int) -> bool:
+    """
+    Writes the terrain GeoTIFF from USGS's 1 m bare-earth DEM instead of the raw point
+    cloud. USGS builds these DEMs from the same 3DEP Lidar, already ground-classified, so
+    PDAL isn't needed. Only the course's area is read, straight from the cloud-hosted
+    GeoTIFFs (HTTP range requests), so nothing large is downloaded.
+    """
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from rasterio.warp import Resampling, reproject
+
+    print("Querying USGS TNM API for 1 m DEM coverage...")
+    items = _fetch_tnm_json({"datasets": DEM_DATASET, "bbox": bbox_to_string(bbox),
+                             "outputFormat": "JSON", "max": 50}).get("items", [])
+    tiles = select_dem_tiles(items)
+    if not tiles:
+        print("  No 1 m DEM covers this area.")
+        return False
+    print(f"  Using {len(tiles)} tile(s) from {_project_of(tiles[0])} "
+          f"(published {tiles[0].get('publicationDate')})")
+
+    utm = bbox_to_utm(bbox, epsg_out)
+    west, north = np.floor(utm["xmin"]), np.ceil(utm["ymax"])
+    width = int(np.ceil((utm["xmax"] - west) / resolution_m))
+    height = int(np.ceil((north - utm["ymin"]) / resolution_m))
+    transform = from_origin(west, north, resolution_m, resolution_m)
+    out = np.full((height, width), NODATA, np.float32)
+
+    env = rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", GDAL_HTTP_MAX_RETRY="5",
+                       GDAL_HTTP_RETRY_DELAY="2", CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif")
+    with env:
+        for t in tiles:
+            url = t["downloadURL"]
+            print(f"  Reading {url.split('/')[-1]}...", flush=True)
+            part = np.full_like(out, NODATA)
+            with rasterio.open("/vsicurl/" + url) as src:
+                reproject(source=rasterio.band(src, 1), destination=part, src_transform=src.transform,
+                          src_crs=src.crs, src_nodata=src.nodata, dst_transform=transform,
+                          dst_crs=f"EPSG:{epsg_out}", dst_nodata=NODATA, resampling=Resampling.bilinear)
+            fill = (out == NODATA) & (part != NODATA)
+            out[fill] = part[fill]
+
+    covered = float((out != NODATA).mean())
+    print(f"  Covered {covered:.0%} of the course area")
+    if covered == 0:
+        return False
+    output_tif.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(output_tif, "w", driver="GTiff", height=height, width=width, count=1, dtype="float32",
+                       crs=f"EPSG:{epsg_out}", transform=transform, nodata=NODATA,
+                       compress="LZW", tiled=True) as dst:
+        dst.write(out, 1)
+    return True
+
+
 def postprocess_heightmap(tif_path: Path):
     """
     Fill NoData voids (from tree canopy gaps) using interpolation,
@@ -313,6 +410,9 @@ def main():
     parser.add_argument("--course", default="tedesco", help="Course slug (matches courses/ directory)")
     parser.add_argument("--skip-download", action="store_true", help="Skip download, use existing .laz files")
     parser.add_argument("--list-only", action="store_true", help="List available products and exit")
+    parser.add_argument("--source", choices=("auto", "dem", "points"), default="auto",
+                        help="dem: USGS 1 m bare-earth DEM (no PDAL, small download); points: raw "
+                             "point cloud through PDAL; auto: points if PDAL is installed, else dem")
     args = parser.parse_args()
 
     # Load course config
@@ -333,6 +433,20 @@ def main():
     # Build bounding box
     bbox = bbox_from_center(lat, lon, buffer_km)
     print(f"Bounding box: {bbox_to_string(bbox)}")
+
+    import shutil
+    source = args.source
+    if source == "auto":
+        source = "points" if shutil.which("pdal") else "dem"
+        if source == "dem":
+            print("PDAL isn't installed: using USGS's 1 m bare-earth DEM (same Lidar, already processed).")
+    if source == "dem" and not args.list_only:
+        output_tif = paths["heightmaps"] / f"{args.course}_terrain.tif"
+        if not build_from_dem(bbox, output_tif, resolution_m, epsg_out):
+            print("\nNo DEM for this area; install PDAL and rerun with --source points.")
+            sys.exit(1)
+        postprocess_heightmap(output_tif)
+        return
 
     # Query available LiDAR products
     items = query_tnm(bbox)
@@ -359,14 +473,18 @@ def main():
         laz_files = list(paths["raw_lidar"].glob("*.la[sz]"))
         print(f"\nUsing {len(laz_files)} existing file(s) in {paths['raw_lidar']}")
     else:
-        print(f"\nDownloading {len(products)} file(s) to {paths['raw_lidar']}")
+        print(f"\nDownloading {len(products)} file(s) to {paths['raw_lidar']} "
+              f"({DOWNLOAD_WORKERS} at a time)", flush=True)
+        urls = []
         for product in products:
             url = product.get("downloadURL")
             if not url:
                 print(f"  No download URL for: {product.get('title')}")
                 continue
-            laz_path = download_file(url, paths["raw_lidar"])
-            laz_files.append(laz_path)
+            urls.append(url)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(DOWNLOAD_WORKERS) as pool:
+            laz_files = list(pool.map(lambda u: download_file(u, paths["raw_lidar"]), urls))
 
     if not laz_files:
         print("No .laz/.las files to process.")

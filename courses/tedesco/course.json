@@ -19,6 +19,19 @@
   "data_sources": {
     "lidar": "USGS 3DEP",
     "greens": "PuttView",
-    "imagery": "USGS/satellite"
+    "imagery": "USGS/satellite",
+    "layout": "Arccos"
+  },
+  "arccos": {
+    "course_id": 6878,
+    "course_version": 4
+  },
+  "layout": {
+    "bunkers_from_photo": true,
+    "greens_from_photo": true,
+    "fairway_runups_from_photo": true,
+    "rough_in_front_of_green": [6, 8, 12, 13],
+    "runup_greenside_only_yd": {"9": 30},
+    "drop_bunkers_without_sand": false
   }
 }

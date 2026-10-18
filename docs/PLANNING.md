@@ -92,6 +92,12 @@ PuttView prints **actual numeric elevation values** at every grid point (3-yard 
 - Covers terrain, fairways, rough, overall course shape
 - **Limitation**: tree canopy on wooded holes may obscure ground returns — supplement with on-site photos
 
+### Arccos (member's own account)
+- Hole maps: surface outlines (green, fairway, tee, bunker, water, trees), par, tee distances (metres), elevation strip
+- Your rounds: every shot's GPS, the tee played, and pin positions
+- Replaces hand-tracing of fairways, greens, bunkers and tees; gives `holes.json` and pin sheets
+- **Limits**: Arccos owns the map data, so personal builds only; its map is missing some tee boxes (Tedesco 1, 2, 3, 8, 18)
+
 ### Satellite Imagery
 - Aerial reference for textures and layout
 - Sources: USGS, Google Earth (reference only), Bing Maps
@@ -122,6 +128,11 @@ PuttView prints **actual numeric elevation values** at every grid point (3-yard 
 ## Pipeline Stages
 
 ```
+Stage 0: Arccos Download
+  Input:  Arccos login + course id/version (course.json "arccos")
+  Script: pipeline/00_arccos.py
+  Output: courses/tedesco/data/raw/arccos/holes/, rounds/
+
 Stage 1: LiDAR Acquisition + Processing
   Input:  Course coordinates (lat/lon bounding box)
   Script: pipeline/01_lidar.py
@@ -143,14 +154,19 @@ Stage 4: Mesh Generation
   Script: pipeline/04_mesh_gen.py
   Output: Terrain mesh + per-green meshes (.obj or .fbx)
 
-Stage 5: Blender Assembly (scripted via bpy)
-  Input:  All meshes + textures
-  Script: pipeline/05_blender_assembly.py
-  Output: courses/tedesco/output/tedesco.blend
+Stage 5: Course Layout (Arccos)
+  Input:  Arccos hole maps + your rounds (Stage 0), terrain (Stage 1)
+  Script: pipeline/05_layout.py
+  Output: courses/tedesco/output/layout/ (holes.json, surfaces, OPCD SVG, height check)
 
-Stage 6: GSPro Export
+Stage 6: Blender Assembly (scripted via bpy)
+  Input:  Terrain OBJ + green OBJs (Stage 4) + layout (Stage 5)
+  Script: pipeline/06_blender_assembly.py
+  Output: courses/tedesco/output/blender/tedesco.blend + per-hole QA renders
+
+Stage 7: GSPro Export
   Input:  Blender scene
-  Script: pipeline/06_gspro_export.py
+  Script: pipeline/07_gspro_export.py
   Output: courses/tedesco/output/gspro/ (final course package)
 ```
 
@@ -197,12 +213,14 @@ gspro-course-pipeline/
       output/
         gspro/               # Final GSPro course package
   pipeline/
+    00_arccos.py
     01_lidar.py
     02_puttview_ocr.py
     03_imagery.py
     04_mesh_gen.py
-    05_blender_assembly.py
-    06_gspro_export.py
+    05_layout.py
+    06_blender_assembly.py
+    07_gspro_export.py
   docs/
     PLANNING.md              # This file
   README.md
@@ -228,7 +246,7 @@ Courses that have PuttView coverage get the full precision green treatment autom
 2. **Download USGS LiDAR** for Tedesco bounding box
 3. **Write + run `01_lidar.py`** — terrain heightmap pipeline
 4. **Pull satellite imagery** for course footprint
-5. **Design `holes.json` schema** — per-hole metadata structure
+5. ~~Design `holes.json` schema~~ — done: `pipeline/05_layout.py` writes it from Arccos (see `docs/05_layout.md`)
 
 ## When PuttView Book Arrives
 
@@ -243,6 +261,6 @@ Courses that have PuttView coverage get the full precision green treatment autom
 
 - [ ] Exact lat/lon coordinates for Tedesco (needed for LiDAR)
 - [ ] Does Tedesco have a drone policy? (useful for fairway contouring)
-- [ ] GSPro Course Forge exact file format requirements (need to research)
-- [ ] Blender version compatibility with bpy scripting approach
+- [ ] GSPro Course Forge exact file format requirements (need to research). Community guides describe the build as the OPCD toolset (Unity 2018.4.36f1, GreenKeeper V4, Tools → OPCD → Build Course); confirm whether "Course Forge" is that toolset or something else
+- [x] Blender version compatibility with bpy scripting approach — Stage 6 tested with Blender 5.2.2 (`pip install bpy`)
 - [ ] Surface property definitions for GSPro (what physics parameters are needed per surface type)
