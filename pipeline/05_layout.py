@@ -243,7 +243,7 @@ def apply_photo_fairways(surfaces: list[dict], photo_path: Path, project, enable
             surfaces.append({"hole": p["hole"], "index": next_index, "arccos_type": None,
                              "arccos_name": "Fairway (photo, run-up only — no Arccos fairway, e.g. a par 3)",
                              "surface": "fairway", "lonlat": ll, "en": en})
-        added[p["hole"]] = added.get(p["hole"], 0) + int(p.get("added_m2") or 0)
+        added[p["hole"]] = int(p.get("added_m2") or 0)  # each piece carries the hole's total
     return added
 
 
