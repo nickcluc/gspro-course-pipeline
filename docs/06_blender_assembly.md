@@ -34,7 +34,7 @@ blender --background --python pipeline/06_blender_assembly.py -- --course tedesc
 blender --background --python pipeline/06_blender_assembly.py -- --course tedesco --render --engine cycles
 ```
 
-Instead of the Blender app, `pip install bpy` gives Blender as a Python module (tested with Blender 5.2.2). Then run the stage with that Python: `python pipeline/06_blender_assembly.py --course tedesco`.
+Instead of the Blender app, `pip install bpy` gives Blender as a Python module (tested with Blender 5.2.2; the app is tested with 4.0.2 and 4.2.23 LTS, the version OPCD's tools need). Then run the stage with that Python: `python pipeline/06_blender_assembly.py --course tedesco`.
 
 ---
 

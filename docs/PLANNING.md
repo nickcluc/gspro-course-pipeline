@@ -56,7 +56,7 @@ Phase 4: Assets & Visuals
   - Skybox, lighting, environment
 
 Phase 5: GSPro Integration
-  - Export to GSPro-compatible format via Course Forge
+  - Build with the OPCD toolset (web app terrain + Clender, Blender OPCD Tools, Unity, GreenKeeper)
   - Define surface physics properties per surface type
   - Pin positions, tee positions, hole metadata
   - Collision and boundary setup
@@ -121,7 +121,7 @@ PuttView prints **actual numeric elevation values** at every grid point (3-yard 
 | pytesseract | OCR of numeric elevation values from PuttView |
 | trimesh | 3D mesh generation and export |
 | Blender (bpy API) | 3D assembly, visual QA, scripted via Python |
-| GSPro Course Forge | Final Unity-based integration and packaging |
+| OPCD toolset | Web app (terrain, Clender), Blender tools, Unity 2018.2.8f1 BaseProject, GreenKeeper V4, Build Course |
 
 ---
 
@@ -164,10 +164,10 @@ Stage 6: Blender Assembly (scripted via bpy)
   Script: pipeline/06_blender_assembly.py
   Output: courses/tedesco/output/blender/tedesco.blend + per-hole QA renders
 
-Stage 7: GSPro Export
-  Input:  Blender scene
-  Script: pipeline/07_gspro_export.py
-  Output: courses/tedesco/output/gspro/ (final course package)
+Stage 7: OPCD Package
+  Input:  Terrain (Stage 1), layout (Stage 5), the OPCD web app's terrain square (course.json "opcd")
+  Script: pipeline/07_opcd_package.py
+  Output: courses/tedesco/output/opcd/ (Clender SVG, terrain OBJ, GreenKeeper sheet)
 ```
 
 ---
@@ -220,7 +220,7 @@ gspro-course-pipeline/
     04_mesh_gen.py
     05_layout.py
     06_blender_assembly.py
-    07_gspro_export.py
+    07_opcd_package.py
   docs/
     PLANNING.md              # This file
   README.md
@@ -261,6 +261,6 @@ Courses that have PuttView coverage get the full precision green treatment autom
 
 - [ ] Exact lat/lon coordinates for Tedesco (needed for LiDAR)
 - [ ] Does Tedesco have a drone policy? (useful for fairway contouring)
-- [ ] GSPro Course Forge exact file format requirements (need to research). Community guides describe the build as the OPCD toolset (Unity 2018.4.36f1, GreenKeeper V4, Tools → OPCD → Build Course); confirm whether "Course Forge" is that toolset or something else
-- [x] Blender version compatibility with bpy scripting approach — Stage 6 tested with Blender 5.2.2 (`pip install bpy`)
+- [x] GSPro build format: the OPCD toolset. Its web app (app.opcdgolf.com) makes the terrain and runs Clender; then Blender 4.2.2+ with OPCD Tools, Unity 2018.2.8f1 with the OPCD V4 BaseProject, GreenKeeper V4 and Build Course (Windows only). Unity 2018.4.36f1 and Blender 4.0.2 in older guides are out of date. Details in `docs/07_opcd_package.md`
+- [x] Blender version compatibility with bpy scripting approach — Stage 6 tested with Blender 5.2.2 (`pip install bpy`), 4.0.2 and 4.2.23 LTS
 - [ ] Surface property definitions for GSPro (what physics parameters are needed per surface type)

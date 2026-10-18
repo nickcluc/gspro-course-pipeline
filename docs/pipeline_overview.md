@@ -1,6 +1,6 @@
 # Pipeline Overview
 
-This pipeline converts publicly available geospatial data, Arccos course maps and PuttView green maps into 3D course assets for GSPro Course Forge.
+This pipeline converts publicly available geospatial data, Arccos course maps and PuttView green maps into the inputs the OPCD toolset needs to build a GSPro course (see `07_opcd_package.md` for the OPCD workflow).
 
 ---
 
@@ -61,7 +61,8 @@ config/course.json
        ▼
 ┌──────────────────────────┐
 │  07_opcd_package.py      │  terrain + layout + photo → Clender SVG, Unity RAW heightmap,
-└──────────────────────────┘  photo overlay, GreenKeeper sheet (OPCD builds the GSPro course)
+└──────────────────────────┘  framed to the OPCD web app's terrain square: Clender SVG, terrain OBJ
+                                in Clender's frame, GreenKeeper sheet (OPCD builds the GSPro course)
 ```
 
 Stages 0, 1, 2 and 3 are independent and can run in any order. Stage 4 requires Stage 1 output and optionally uses Stage 2 output. Stage 5 requires Stage 0 output and uses Stage 1's terrain to frame its outputs.
@@ -100,7 +101,8 @@ python pipeline/05_layout.py --course tedesco   # rerun to include the reviewed 
 # Stage 6: Blender assembly (inside Blender; add --render for per-hole QA images)
 blender --background --python pipeline/06_blender_assembly.py -- --course tedesco --render
 
-# Stage 7: files for OPCD (Clender, Blender OPCD Tools, Unity, GreenKeeper)
+# Stage 7: files for OPCD (web app SVG Jobs, Blender OPCD Tools, GreenKeeper).
+# First pick the terrain square in the OPCD web app and put it in course.json "opcd.terrain".
 python pipeline/07_opcd_package.py --course tedesco
 ```
 
