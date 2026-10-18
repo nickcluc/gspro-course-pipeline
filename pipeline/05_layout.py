@@ -229,11 +229,14 @@ def apply_photo_fairways(surfaces: list[dict], photo_path: Path, project, enable
         en = [project(x, y) for x, y in ll]
         old = [s for s in surfaces if s["surface"] == "fairway" and s["hole"] == p["hole"]
                and s.get("arccos_type") is not None and overlaps(s["en"], en)]
-        if not old:
-            continue
-        for s in old:
-            surfaces.remove(s)
-        surfaces.append(dict(old[0], en=en, lonlat=ll, arccos_name="Fairway (photo, with run-up to the green)"))
+        if old:  # the fairway, redrawn to run on to the green
+            for s in old:
+                surfaces.remove(s)
+            surfaces.append(dict(old[0], en=en, lonlat=ll, arccos_name="Fairway (photo, with run-up to the green)"))
+        else:  # fairway in front of the green that Arccos doesn't have (a par 3's approach)
+            surfaces.append({"hole": p["hole"], "index": 2000 + len(surfaces), "arccos_type": 7,
+                             "arccos_name": "Fairway (photo, in front of the green)", "surface": "fairway",
+                             "lonlat": ll, "en": en})
         added[p["hole"]] = added.get(p["hole"], 0) + int(p.get("added_m2") or 0)
     return added
 

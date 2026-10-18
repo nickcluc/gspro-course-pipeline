@@ -229,7 +229,7 @@ class TestProcess:
         surfaces = [{"hole": 1, "surface": "fairway", "en": fairway}, {"hole": 1, "surface": "green", "en": green}]
         lab = np.zeros((400, 400), np.uint8)
         out = photo.fairway_runups(img, tf, lab, surfaces, PX)
-        assert len(out) == 1 and out[0]["added_m2"] > 0.8 * 15 * 24  # most of the 15 m x 24 m gap
+        assert len(out) == 1 and out[0]["added_m2"] > 0.55 * 15 * 24  # most of the 15 m x 24 m gap (smoothing rounds its corners)
         ring = max(out[0]["rings"], key=len)
         rows = [(N0 - n) / PX for _, n in ring]
         assert max(rows) > 345 and min(rows) < 125  # one shape, from the fairway's top to the green
@@ -301,3 +301,19 @@ class TestProcess:
             ds.write(np.zeros((3, 10, 10), np.uint8))
         with pytest.raises(ValueError):
             photo.process("test", overlays=False)
+
+
+def test_rough_in_front_of_green_is_left_alone():
+    import rasterio
+    img = np.zeros((4, 200, 200), np.float32)
+    img[:] = np.array((132, 150, 108, 199), np.float32)[:, None, None]  # all mown
+    img += np.random.default_rng(7).normal(0, 1.5, img.shape).astype(np.float32)
+    tf = rasterio.transform.from_origin(E0, N0, PX, PX)
+    en = lambda c, r: (E0 + c * PX, N0 - r * PX)  # noqa: E731
+    fairway = [en(60 + c, 20) for c in range(0, 80, 10)] + [en(140, 20 + r) for r in range(0, 100, 10)] \
+        + [en(140 - c, 120) for c in range(0, 80, 10)] + [en(60, 120 - r) for r in range(0, 100, 10)]
+    green = [en(70, 150), en(130, 150), en(130, 190), en(70, 190)]
+    surfaces = [{"hole": 4, "surface": "fairway", "en": fairway}, {"hole": 4, "surface": "green", "en": green}]
+    lab = np.zeros((200, 200), np.uint8)
+    assert photo.fairway_runups(img, tf, lab, surfaces, PX, skip={4}) == []
+    assert photo.fairway_runups(img, tf, lab, surfaces, PX)  # found when not skipped

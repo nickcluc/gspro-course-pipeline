@@ -582,8 +582,11 @@ def green_outlines(img, tf, lab, surfaces, px) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 RUNUP_FROM_GREEN_M = 70.0  # fairway this close to the green marks out where a run-up can be
+RUNUP_TOWARD_TEE_M = 50.0  # without a fairway (par 3s), the run-up is looked for this far toward the tee
 RUNUP_PAD_M = 4.0
-RUNUP_ROUND_M = 1.0        # blur that smooths the joined fairway's edge
+RUNUP_COLLAR_M = 5.0       # a run-up may stop this short of the green (collar and fringe between)
+RUNUP_MIN_WIDTH_M = 3.0    # narrower strips (mown paths, collar edges) aren't run-ups
+RUNUP_ROUND_M = 2.0        # blur that smooths the new edge
 
 
 def fairway_features(img: np.ndarray) -> np.ndarray:
@@ -593,12 +596,21 @@ def fairway_features(img: np.ndarray) -> np.ndarray:
     return np.stack([ndi.uniform_filter(img[i], 7) for i in range(4)] + [ndi.uniform_filter(tex, 7)])
 
 
-def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = None) -> list[dict]:
+def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = None,
+                   tees_by_hole: dict | None = None, skip: set | None = None,
+                   limit_m: dict | None = None) -> list[dict]:
     """
-    Arccos often stops a fairway short of the green when the mown run-up carries on to it.
-    What fairway looks like is learned from inside Arccos's fairways. Between each fairway's
-    green end and the green, fairway-looking grass that joins the two is added, and the
-    fairway is redrawn as one smoothed shape. Returns, per hole, the new outline(s).
+    The mown fairway in front of each green. Arccos often stops a fairway short of the
+    green, and par 3s have no fairway at all, even where fairway runs up to the green.
+
+    What fairway looks like is learned from inside Arccos's fairways. In front of each
+    green (toward the fairway's end, or toward the back tee on a hole with no fairway),
+    fairway-looking grass at least RUNUP_MIN_WIDTH_M wide that touches the green is the
+    run-up. Where it reaches the fairway, the two are redrawn as one shape; otherwise it's
+    its own fairway shape (a par 3's approach, or fairway past a band of rough).
+    Holes in `skip` (rough in front of the green) are left alone. `limit_m` caps how far
+    from the green a hole's run-up reaches ({hole: metres}), for a hole whose fairway
+    stops, gives way to rough, then starts again just short of the green.
     """
     import rasterio
     from rasterio.features import rasterize
@@ -622,23 +634,29 @@ def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = Non
     mu, cov = X.mean(0), np.cov(X.T) + np.eye(F.shape[0])
     d2 = -2 * _gauss_loglik(F, mu, cov) - float(np.linalg.slogdet(cov)[1])
     like = (d2 < float(np.percentile(d2[inside], 95))) & ~np.isin(lab, [LABELS["sand"], LABELS["trees"], LABELS["water"]])
-    tees = burn([s["en"] for s in surfaces if s["surface"] == "tee"])
-    like &= ~tees
+    like &= ~burn([s["en"] for s in surfaces if s["surface"] == "tee"])
     inv = ~tf
+    wide = _disk(max(1, int(round(RUNUP_MIN_WIDTH_M / 2 / px))))
     out = []
-    for hole in sorted({s["hole"] for s in fairways}):
+    for hole in sorted({s["hole"] for s in surfaces if s["surface"] == "green"}):
+        if skip and hole in skip:
+            continue
         fws = [s["en"] for s in fairways if s["hole"] == hole]
         greens = (greens_by_hole or {}).get(hole) or [s["en"] for s in surfaces
                                                          if s["surface"] == "green" and s["hole"] == hole]
-        if not greens:
-            continue
         g = max(greens, key=len)
         gc = np.mean(np.asarray(g, float), axis=0)
-        near = [p for r in fws for p in r if math.dist(p, gc) < RUNUP_FROM_GREEN_M]
-        pts = np.array(near + list(g), float)
-        if len(near) < 3:
+        reach = list(g) + [p for r in fws for p in r if math.dist(p, gc) < RUNUP_FROM_GREEN_M]
+        tee = (tees_by_hole or {}).get(hole)
+        if tee is not None and math.dist(tee, gc) > 1:
+            u = (np.asarray(tee, float) - gc) / math.dist(tee, gc)
+            ahead = gc + u * min(RUNUP_TOWARD_TEE_M, 0.8 * math.dist(tee, gc))
+            half = float(np.max(np.abs((np.asarray(g, float) - gc) @ np.array([-u[1], u[0]])))) + 10.0
+            side = np.array([-u[1], u[0]]) * half  # as wide as the green, plus 10 m each side
+            reach += [tuple(ahead + side), tuple(ahead - side)]
+        pts = np.array(reach, float)
+        if len(pts) < 4:
             continue
-        # the window holds the whole fairway, so the redrawn outline is the whole fairway
         cols = np.array([inv @ tuple(p) for p in list(pts) + [q for r in fws for q in r]])
         pad = int((RUNUP_PAD_M + 10) / px)
         c0, r0 = np.maximum((cols.min(0) - pad).astype(int), 0)
@@ -646,41 +664,64 @@ def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = Non
         c1, r1 = min(c1, W), min(r1, H)
         sub_tf = tf @ rasterio.Affine.translation(c0, r0)
         shape = (r1 - r0, c1 - c0)
-        hull = pts[ConvexHull(pts).vertices]
-        zone = ndi.binary_dilation(burn([hull], shape, sub_tf), iterations=max(1, int(RUNUP_PAD_M / px)))
+        zone = ndi.binary_dilation(burn([pts[ConvexHull(pts).vertices]], shape, sub_tf),
+                                   iterations=max(1, int(RUNUP_PAD_M / px)))
         fm = burn(fws, shape, sub_tf)
         gm = burn([g], shape, sub_tf)
-        cand = ndi.binary_opening(like[r0:r1, c0:c1] & zone & ~fm & ~gm, iterations=3)
+        cand = like[r0:r1, c0:c1] & zone & ~fm & ~gm
+        cand = ndi.binary_opening(cand, wide)  # drops strips narrower than RUNUP_MIN_WIDTH_M
+        if limit_m and hole in limit_m:
+            cand &= ndi.distance_transform_edt(~gm) * px <= float(limit_m[hole])
+        near_g = ndi.binary_dilation(gm, iterations=max(1, int(RUNUP_COLLAR_M / px)))
         lbl, n = ndi.label(cand)
-        if not n:
-            continue
-        near_f = ndi.binary_dilation(fm, iterations=max(1, int(1 / px)))
-        near_g = ndi.binary_dilation(gm, iterations=max(1, int(3 / px)))
-        joins = [i for i in range(1, n + 1) if (near_f & (lbl == i)).any() and (near_g & (lbl == i)).any()]
+        joins = [i for i in range(1, n + 1) if (near_g & (lbl == i)).any()]
         if not joins:
             continue
         runup = np.isin(lbl, joins)
-        # join the run-up to the green across the collar, and smooth the whole fairway end
-        merged = fm | runup | (ndi.binary_dilation(runup, iterations=max(1, int(3 / px))) & near_g & ~gm)
-        merged = (ndi.gaussian_filter(merged.astype(np.float32), RUNUP_ROUND_M / px) > 0.5) | fm
+        runup |= ndi.binary_dilation(runup, iterations=max(1, int(RUNUP_COLLAR_M / px))) & near_g & ~gm  # across the collar
+        near_f = ndi.binary_dilation(fm, iterations=max(1, int(1.5 / px)))
+        touched = [r for r in fws if (burn([r], shape, sub_tf) & ndi.binary_dilation(runup, iterations=max(1, int(1.5 / px)))).any()]
+        base = burn(touched, shape, sub_tf) if touched else np.zeros(shape, bool)
+        merged = base | runup
+        merged = (ndi.gaussian_filter(merged.astype(np.float32), RUNUP_ROUND_M / px) > 0.5) | base
         merged = ndi.binary_fill_holes(merged) & ~ndi.binary_erosion(gm, iterations=max(1, int(1 / px)))
         added = float((merged & ~fm).sum()) * px * px
-        rings = [r for r in outlines(merged, sub_tf) if len(r) >= 3]
-        # only redraw the fairway pieces the run-up touches; others stay as Arccos drew them
-        touched = []
-        for r in fws:
-            m = burn([r], shape, sub_tf)
-            if (m & ndi.binary_dilation(runup, iterations=max(1, int(1.5 / px)))).any():
-                touched.append(r)
-        out.append({"hole": hole, "rings": rings, "added_m2": round(added), "replaces": touched})
+        def ring_m2(r):
+            return abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(r, r[1:] + r[:1]))) / 2
+        rings = [r for r in outlines(merged, sub_tf) if len(r) >= 3 and ring_m2(r) >= 50]
+        if rings and added > 20:
+            out.append({"hole": hole, "rings": rings, "added_m2": round(added),
+                        "joins_fairway": bool(touched)})
     return out
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
+def back_tees(surfaces: list[dict], holes_json: Path) -> dict:
+    """
+    Each hole's farthest tee from the green (easting, northing): the tee spots Stage 05
+    placed (holes.json) when there, else Arccos's tee boxes.
+    """
+    out = {}
+    if holes_json.exists():
+        for h in json.loads(holes_json.read_text()).get("holes") or []:
+            g = h.get("green")
+            spots = [(t["position"]["easting"], t["position"]["northing"]) for t in h.get("tees") or [] if t.get("position")]
+            if g and spots:
+                out[h["hole"]] = max(spots, key=lambda p: math.dist(p, (g["easting"], g["northing"])))
+    for hole in {s["hole"] for s in surfaces}:
+        if hole in out:
+            continue
+        greens = [layout.centroid(s["en"]) for s in surfaces if s["hole"] == hole and s["surface"] == "green"]
+        boxes = [layout.centroid(s["en"]) for s in surfaces if s["hole"] == hole and s["surface"] == "tee"]
+        if greens and boxes:
+            out[hole] = max(boxes, key=lambda p: math.dist(p, greens[0]))
+    return out
+
+
 def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dict:
-    load_course_config(slug)
+    cfg = load_course_config(slug)
     paths = get_paths(slug)
     if not paths["imagery"].exists():
         raise FileNotFoundError(f"No aerial image at {paths['imagery']}. Run 03_imagery.py first.")
@@ -775,10 +816,13 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
                         "photo_m2": g["photo_m2"], "source": "aerial photo"})
         photo_greens.setdefault(g["hole"], []).append(g["ring"])
 
-    for f in fairway_runups(img, tf, lab, surfaces, px, photo_greens):
+    for f in fairway_runups(img, tf, lab, surfaces, px, photo_greens, back_tees(surfaces, paths["out"] / "holes.json"),
+                            set((cfg.get("layout") or {}).get("rough_in_front_of_green") or []),
+                            {int(k): v for k, v in ((cfg.get("layout") or {}).get("runup_limit_m") or {}).items()}):
         for ring in f["rings"]:
             add(ring, {"finding": "fairway_with_runup", "surface": "fairway", "added_m2": f["added_m2"],
-                       "source": "aerial photo"}, hole=f["hole"])  # the fairway's own hole, not the nearest
+                       "joins_fairway": f["joins_fairway"], "source": "aerial photo"},
+                hole=f["hole"])  # the fairway's own hole, not the nearest
 
     native, native_lim = native_mask(img, lab, px)
     for ring in outlines(native > 0, tf):

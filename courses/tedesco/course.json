@@ -30,6 +30,8 @@
     "bunkers_from_photo": true,
     "greens_from_photo": true,
     "fairway_runups_from_photo": true,
+    "rough_in_front_of_green": [6, 8, 12, 13],
+    "runup_limit_m": {"9": 25},
     "drop_bunkers_without_sand": false
   }
 }
