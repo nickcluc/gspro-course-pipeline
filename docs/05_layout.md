@@ -28,12 +28,14 @@ Run it after Stage 01 for the best result. Without the terrain, the SVG is frame
 ### Options (`course.json`)
 
 ```json
-"layout": {"bunkers_from_photo": true, "greens_from_photo": true, "fairway_runups_from_photo": true, "drop_bunkers_without_sand": false}
+"layout": {"bunkers_from_photo": true, "greens_from_photo": true, "fairway_runups_from_photo": true,
+          "rough_in_front_of_green": [6, 8, 12, 13], "drop_bunkers_without_sand": false}
 ```
 
 - `bunkers_from_photo`: replace each Arccos bunker with Stage 05b's photo outline of the same sand, which is usually more accurate. Tedesco: 39 replaced.
 - `greens_from_photo`: replace each Arccos green with Stage 05b's photo outline. Arccos greens are drawn 1–3 m inside the real edge; Tedesco's are on average 1.5 times bigger in the photo.
-- `fairway_runups_from_photo`: replace each Arccos fairway that stops short of its green with Stage 05b's redrawn fairway, which carries the mown run-up on to the green. Tedesco: 12 holes.
+- `fairway_runups_from_photo`: carry the mown run-up on to each green, either by replacing an Arccos fairway that stops short, or, on a hole with no Arccos fairway (a par 3), adding the approach as its own fairway shape. A hole whose run-up is cut off from the main fairway by rough (Tedesco's 9th) also gets its own shape, left unmerged.
+- `rough_in_front_of_green`: holes with real rough in front of the green, where nothing should be added. Nick checked Tedesco by eye: every green has fairway running up to it except holes 6, 8, 12 and 13.
 - `greens_from_puttview` (on by default): when Stage 02 has read a hole's PuttView page, that page's green outline becomes the green. It's turned, flipped if the page is mirrored, and nudged until it best overlaps the map's green (the photo outline when `greens_from_photo` is on); its shape and size come from the book. The placement goes in `holes.json` as `green.puttview_fit`, with `iou` (0 to 1) for how well it matched, and Stage 06 places the PuttView green mesh the same way.
 - `drop_bunkers_without_sand`: remove Arccos bunkers where Stage 05b saw only grass. Off for Tedesco until the 14 are checked.
 

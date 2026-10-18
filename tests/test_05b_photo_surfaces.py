@@ -230,9 +230,74 @@ class TestProcess:
         lab = np.zeros((400, 400), np.uint8)
         out = photo.fairway_runups(img, tf, lab, surfaces, PX)
         assert len(out) == 1 and out[0]["added_m2"] > 0.8 * 15 * 24  # most of the 15 m x 24 m gap
+        assert out[0]["joins_fairway"]
         ring = max(out[0]["rings"], key=len)
         rows = [(N0 - n) / PX for _, n in ring]
         assert max(rows) > 345 and min(rows) < 125  # one shape, from the fairway's top to the green
+
+    def test_skipped_hole_gets_no_runup(self):
+        # same as above, but the hole is in the skip set (rough in front of its green)
+        import rasterio
+        rng = np.random.default_rng(6)
+        img = np.zeros((4, 400, 400), np.float32)
+        img[:] = np.array((122, 136, 99, 180), np.float32)[:, None, None]
+        img += rng.normal(0, 6, img.shape).astype(np.float32)
+        mown = np.array((132, 150, 108, 199), np.float32)[:, None, None]
+        img[:, 40:360, 160:240] = mown + rng.normal(0, 1.5, (4, 320, 80)).astype(np.float32)
+        tf = rasterio.transform.from_origin(E0, N0, PX, PX)
+        en = lambda c, r: (E0 + c * PX, N0 - r * PX)  # noqa: E731
+        fairway = ([en(160 + c, 120) for c in range(0, 80, 10)] + [en(240, 120 + r) for r in range(0, 180, 10)]
+                   + [en(240 - c, 300) for c in range(0, 80, 10)] + [en(160, 300 - r) for r in range(0, 180, 10)])
+        green = [en(170, 350), en(230, 350), en(230, 395), en(170, 395)]
+        surfaces = [{"hole": 1, "surface": "fairway", "en": fairway}, {"hole": 1, "surface": "green", "en": green}]
+        lab = np.zeros((400, 400), np.uint8)
+        out = photo.fairway_runups(img, tf, lab, surfaces, PX, skip={1})
+        assert out == []
+
+    def test_par3_approach_with_no_arccos_fairway(self):
+        # hole 3 (a par 3) has no fairway shape of its own, but another hole's fairway
+        # elsewhere in the image teaches the model what mown grass looks like; mown
+        # grass runs from hole 3's green back toward its tee
+        import rasterio
+        rng = np.random.default_rng(7)
+        img = np.zeros((4, 400, 400), np.float32)
+        img[:] = np.array((122, 136, 99, 180), np.float32)[:, None, None]
+        img += rng.normal(0, 6, img.shape).astype(np.float32)
+        mown = np.array((132, 150, 108, 199), np.float32)[:, None, None]
+        img[:, 250:360, 160:240] = mown + rng.normal(0, 1.5, (4, 110, 80)).astype(np.float32)  # approach, rows 250-360
+        img[:, 10:90, 10:70] = mown + rng.normal(0, 1.5, (4, 80, 60)).astype(np.float32)        # hole 1's fairway
+        tf = rasterio.transform.from_origin(E0, N0, PX, PX)
+        en = lambda c, r: (E0 + c * PX, N0 - r * PX)  # noqa: E731
+        fairway1 = [en(10, 10), en(70, 10), en(70, 90), en(10, 90)]
+        green = [en(170, 350), en(230, 350), en(230, 395), en(170, 395)]
+        tee_en = en(200, 40)  # 310 px = 93 m back, beyond RUNUP_TOWARD_TEE_M
+        surfaces = [{"hole": 1, "surface": "fairway", "en": fairway1}, {"hole": 3, "surface": "green", "en": green}]
+        lab = np.zeros((400, 400), np.uint8)
+        out = photo.fairway_runups(img, tf, lab, surfaces, PX, tees_by_hole={3: tee_en})
+        assert len(out) == 1 and out[0]["hole"] == 3 and not out[0]["joins_fairway"] and out[0]["added_m2"] > 500
+
+    def test_separated_patch_stays_its_own_shape(self):
+        # fairway, then a band of rough, then a second fairway-looking patch right at the green
+        # (Tedesco's 9th): the near-green patch must not be stitched to the far fairway through rough
+        import rasterio
+        rng = np.random.default_rng(8)
+        img = np.zeros((4, 400, 400), np.float32)
+        img[:] = np.array((122, 136, 99, 180), np.float32)[:, None, None]
+        img += rng.normal(0, 6, img.shape).astype(np.float32)
+        mown = np.array((132, 150, 108, 199), np.float32)[:, None, None]
+        img[:, 40:200, 160:240] = mown + rng.normal(0, 1.5, (4, 160, 80)).astype(np.float32)   # main fairway
+        img[:, 300:350, 160:240] = mown + rng.normal(0, 1.5, (4, 50, 80)).astype(np.float32)   # patch by the green
+        tf = rasterio.transform.from_origin(E0, N0, PX, PX)
+        en = lambda c, r: (E0 + c * PX, N0 - r * PX)  # noqa: E731
+        fairway = [en(160, 40), en(240, 40), en(240, 200), en(160, 200)]
+        green = [en(170, 350), en(230, 350), en(230, 395), en(170, 395)]
+        surfaces = [{"hole": 9, "surface": "fairway", "en": fairway}, {"hole": 9, "surface": "green", "en": green}]
+        lab = np.zeros((400, 400), np.uint8)
+        out = photo.fairway_runups(img, tf, lab, surfaces, PX)
+        assert len(out) == 1 and not out[0]["joins_fairway"]  # the patch is its own shape, not merged uphill
+        ring = max(out[0]["rings"], key=len)
+        rows = [(N0 - n) / PX for _, n in ring]
+        assert min(rows) > 250  # stays near the green; doesn't reach back to the main fairway (row 200 and above)
 
     def test_photo_outlines_replace_and_drop(self, course):
         photo.process("test", overlays=False)
@@ -287,6 +352,40 @@ class TestProcess:
         crescent = [(0, 0), (10, 0), (10, 10), (8, 10), (8, 2), (0, 2)]  # centre falls outside it
         assert not layout._inside(*layout.centroid(crescent), crescent)
         assert layout.overlaps(crescent, [(x * 1.05, y * 1.05) for x, y in crescent])
+
+    def test_apply_photo_fairways_replaces_and_adds(self, tmp_path):
+        proj = lambda x, y: (x, y)  # noqa: E731 — identity projector, so coordinates are plain metres here
+        old_fairway = [(0, 0), (10, 0), (10, 20), (0, 20)]
+        surfaces = [{"hole": 1, "surface": "fairway", "arccos_type": 7, "arccos_name": "Fairway",
+                     "en": old_fairway, "lonlat": old_fairway}]
+        new_fairway = [(0, 0), (10, 0), (10, 25), (0, 25)]  # hole 1: replaces the Arccos fairway
+        par3_approach = [(100, 100), (108, 100), (108, 112), (100, 112)]  # hole 3: no Arccos fairway at all
+        photo_path = tmp_path / "photo_surfaces.geojson"
+        photo_path.write_text(json.dumps({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"finding": "fairway_with_runup", "hole": 1, "added_m2": 50,
+                                               "joins_fairway": True},
+             "geometry": {"type": "Polygon", "coordinates": [new_fairway + [new_fairway[0]]]}},
+            {"type": "Feature", "properties": {"finding": "fairway_with_runup", "hole": 3, "added_m2": 80,
+                                               "joins_fairway": False},
+             "geometry": {"type": "Polygon", "coordinates": [par3_approach + [par3_approach[0]]]}},
+        ]}))
+        added = layout.apply_photo_fairways(surfaces, photo_path, proj, enabled=True)
+        assert added == {1: 50, 3: 80}
+        by_hole = {s["hole"]: s for s in surfaces if s["surface"] == "fairway"}
+        assert len(surfaces) == 2 and set(by_hole) == {1, 3}
+        assert by_hole[1]["en"] == new_fairway  # hole 1's old fairway is gone, replaced
+        assert by_hole[3]["en"] == par3_approach and by_hole[3]["arccos_type"] is None  # a brand-new shape
+
+    def test_apply_photo_fairways_off_by_default(self, tmp_path):
+        proj = lambda x, y: (x, y)  # noqa: E731
+        surfaces = []
+        photo_path = tmp_path / "photo_surfaces.geojson"
+        photo_path.write_text(json.dumps({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"finding": "fairway_with_runup", "hole": 3, "added_m2": 80,
+                                               "joins_fairway": False},
+             "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}}]}))
+        assert layout.apply_photo_fairways(surfaces, photo_path, proj, enabled=False) == {}
+        assert surfaces == []
 
     def test_overlays_written(self, course):
         photo.process("test")

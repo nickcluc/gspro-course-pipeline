@@ -65,9 +65,12 @@ Arccos's own middle always stays in. Turn on `greens_from_photo` in `course.json
 
 ### Fairway run-ups
 
-Arccos often stops a fairway short of the green even when the mown grass carries on to it. What fairway looks like (colour and smoothness) is learned from inside Arccos's fairways. For each hole, the stage looks between the fairway's green end (the part within 70 m of the green) and the green. Fairway-looking grass there that touches both is the run-up. It's joined to the fairway, the joined edge is smoothed, and the whole fairway is written as one shape. Holes where rough, water or trees sit between fairway and green get nothing added.
+Most greens have mown fairway running right up to them, even where Arccos's fairway shape stops short, or — on a par 3 — where Arccos has no fairway there at all. What fairway looks like (colour and smoothness) is learned from inside Arccos's fairways, wherever they are on the course. For each green, the stage looks at the ground between the green and the near end of its fairway (or, on a hole with no fairway, up to 50 m back toward the tee). Fairway-looking grass there that's at least 6 m wide and touches the green is the run-up.
 
-Turn on `fairway_runups_from_photo` in `course.json` to use these fairways in Stage 05.
+- If it also reaches the fairway, the two are redrawn as one smoothed shape.
+- If it doesn't — either a par 3's approach, or (Tedesco's 9th) a green-side patch separated from the main fairway by a band of rough — it's written as its own fairway shape, and the far fairway is left as Arccos drew it.
+
+List holes with real rough in front of the green under `rough_in_front_of_green` in `course.json`; nothing is added there. Turn on `fairway_runups_from_photo` to use these fairways in Stage 05.
 
 ### Trees
 

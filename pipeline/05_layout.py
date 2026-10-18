@@ -216,11 +216,14 @@ def apply_photo_greens(surfaces: list[dict], photo_path: Path, project, replace:
 def apply_photo_fairways(surfaces: list[dict], photo_path: Path, project, enabled: bool) -> dict:
     """
     Swaps Arccos fairways that stop short of the green for Stage 05b's redrawn fairway,
-    which carries the mown run-up on to the green. Returns {hole: m2 added}.
+    which carries the mown run-up on to the green. On a hole with no Arccos fairway at
+    all (a par 3 whose approach is mown fairway), the run-up becomes a new fairway shape
+    instead of replacing one. Returns {hole: m2 added}.
     """
     if not enabled or not photo_path.exists():
         return {}
     added = {}
+    next_index = 2000
     for f in json.loads(photo_path.read_text()).get("features") or []:
         p = f["properties"]
         if p.get("finding") != "fairway_with_runup":
@@ -229,11 +232,17 @@ def apply_photo_fairways(surfaces: list[dict], photo_path: Path, project, enable
         en = [project(x, y) for x, y in ll]
         old = [s for s in surfaces if s["surface"] == "fairway" and s["hole"] == p["hole"]
                and s.get("arccos_type") is not None and overlaps(s["en"], en)]
-        if not old:
-            continue
-        for s in old:
-            surfaces.remove(s)
-        surfaces.append(dict(old[0], en=en, lonlat=ll, arccos_name="Fairway (photo, with run-up to the green)"))
+        if old:
+            for s in old:
+                surfaces.remove(s)
+            surfaces.append(dict(old[0], en=en, lonlat=ll, arccos_name="Fairway (photo, with run-up to the green)"))
+        elif p.get("joins_fairway"):
+            continue  # should have matched an existing fairway; nothing to attach it to
+        else:
+            next_index += 1
+            surfaces.append({"hole": p["hole"], "index": next_index, "arccos_type": None,
+                             "arccos_name": "Fairway (photo, run-up only — no Arccos fairway, e.g. a par 3)",
+                             "surface": "fairway", "lonlat": ll, "en": en})
         added[p["hole"]] = added.get(p["hole"], 0) + int(p.get("added_m2") or 0)
     return added
 
