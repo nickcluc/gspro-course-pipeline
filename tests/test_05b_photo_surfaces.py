@@ -299,6 +299,30 @@ class TestProcess:
         rows = [(N0 - n) / PX for _, n in ring]
         assert min(rows) > 250  # stays near the green; doesn't reach back to the main fairway (row 200 and above)
 
+    def test_greenside_only_stays_by_the_green(self):
+        # the hill between fairway and green photographs like fairway but is rough (Tedesco's 9th):
+        # with greenside_only, only the stretch near the green is taken, and it isn't joined uphill
+        import rasterio
+        rng = np.random.default_rng(9)
+        img = np.zeros((4, 400, 400), np.float32)
+        img[:] = np.array((122, 136, 99, 180), np.float32)[:, None, None]
+        img += rng.normal(0, 6, img.shape).astype(np.float32)
+        mown = np.array((132, 150, 108, 199), np.float32)[:, None, None]
+        img[:, 40:360, 160:240] = mown + rng.normal(0, 1.5, (4, 320, 80)).astype(np.float32)
+        tf = rasterio.transform.from_origin(E0, N0, PX, PX)
+        en = lambda c, r: (E0 + c * PX, N0 - r * PX)  # noqa: E731
+        fairway = ([en(160 + c, 40) for c in range(0, 80, 10)] + [en(240, 40 + r) for r in range(0, 160, 10)]
+                   + [en(240 - c, 200) for c in range(0, 80, 10)] + [en(160, 200 - r) for r in range(0, 160, 10)])
+        green = [en(170, 350), en(230, 350), en(230, 395), en(170, 395)]   # centre row ~372
+        surfaces = [{"hole": 9, "surface": "fairway", "en": fairway}, {"hole": 9, "surface": "green", "en": green}]
+        lab = np.zeros((400, 400), np.uint8)
+        joined = photo.fairway_runups(img, tf, lab, surfaces, PX)
+        assert joined[0]["joins_fairway"]  # without the setting it climbs all the way to the fairway
+        out = photo.fairway_runups(img, tf, lab, surfaces, PX, greenside_only={9: 20.0})
+        assert len(out) == 1 and not out[0]["joins_fairway"]
+        rows = [(N0 - n) / PX for _, n in max(out[0]["rings"], key=len)]
+        assert min(rows) > 372 - 20 / PX - 3  # nothing further than 20 m from the green's centre
+
     def test_photo_outlines_replace_and_drop(self, course):
         photo.process("test", overlays=False)
         cfg = json.loads((course / "course.json").read_text())

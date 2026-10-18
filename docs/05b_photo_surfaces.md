@@ -70,7 +70,13 @@ Most greens have mown fairway running right up to them, even where Arccos's fair
 - If it also reaches the fairway, the two are redrawn as one smoothed shape.
 - If it doesn't — either a par 3's approach, or (Tedesco's 9th) a green-side patch separated from the main fairway by a band of rough — it's written as its own fairway shape, and the far fairway is left as Arccos drew it.
 
-List holes with real rough in front of the green under `rough_in_front_of_green` in `course.json`; nothing is added there. Turn on `fairway_runups_from_photo` to use these fairways in Stage 05.
+Only ground in front of the green counts (the side facing the fairway's end, or the tee), so the mown surround at the sides and back isn't taken. Width is judged together with the fairway and green either side: a short gap between a wide fairway and the green passes, but a thin strip running off the fairway is cut back to where it's truly wide. Speckle up to about 3 m is mended first, and a run-up within 5 m of the green's edge counts as touching it, since the collar and fringe lie between.
+
+Two settings in `course.json` (under `layout`) cover what the photo can't tell:
+- `rough_in_front_of_green`: holes with real rough in front of the green. Nothing is added there.
+- `runup_greenside_only_yd`: `{hole: yards}` for a hole with rough between the fairway and a short stretch of fairway at the green. The run-up is taken only within that many yards of the green's centre and is never joined to the main fairway. On Tedesco's 9th the rough up the hill photographs like fairway, so without this the run-up climbs all the way back.
+
+Turn on `fairway_runups_from_photo` to use these fairways in Stage 05.
 
 ### Trees
 
@@ -98,7 +104,7 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
 - 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 436 m² against Arccos's 268 m²
-- Run-ups added on 12 holes (1, 2, 4, 6, 9, 10, 11, 14, 15, 16, 17, 18), about 7,800 m² in all; none on 5 (water) or 12 (rough and trees)
+- Run-ups on all 14 holes with fairway in front of the green (all but 6, 8, 12 and 13), about 7,400 m² in all: par 3s 3 and 7 get an approach shape of their own, and 9 a short green-side stretch kept apart from the main fairway
 - 231 tree areas Arccos doesn't map: 151 on the back nine (29 on hole 16), 80 on the front, where Arccos already maps most single trees
 - 12,200 m² of tree shadow and 182 roof or paving patches taken out of the tree areas
 - Runs in about 2½ minutes

@@ -31,6 +31,7 @@
     "greens_from_photo": true,
     "fairway_runups_from_photo": true,
     "rough_in_front_of_green": [6, 8, 12, 13],
+    "runup_greenside_only_yd": {"9": 30},
     "drop_bunkers_without_sand": false
   }
 }

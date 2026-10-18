@@ -586,6 +586,8 @@ RUNUP_TOWARD_TEE_M = 50.0  # without a fairway (par 3s), the run-up is looked fo
 RUNUP_PAD_M = 4.0
 RUNUP_MIN_WIDTH_M = 6.0    # narrower strips (mown paths through rough) aren't run-ups
 RUNUP_ROUND_M = 1.0        # blur that smooths the new edge
+RUNUP_MEND_M = 1.5         # gaps up to about twice this are mended before the width check
+RUNUP_COLLAR_M = 5.0       # a run-up this close to the green's edge touches it (collar and fringe lie between)
 
 
 def fairway_features(img: np.ndarray) -> np.ndarray:
@@ -618,7 +620,8 @@ def back_tees(surfaces: list[dict], holes_json: Path) -> dict:
 
 
 def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = None,
-                   tees_by_hole: dict | None = None, skip: set | None = None) -> list[dict]:
+                   tees_by_hole: dict | None = None, skip: set | None = None,
+                   debug: dict | None = None, greenside_only: dict | None = None) -> list[dict]:
     """
     The mown fairway in front of each green. Arccos often stops a fairway short of the
     green, and par 3s have no fairway at all, even where fairway runs up to the green.
@@ -628,7 +631,10 @@ def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = Non
     fairway-looking grass at least RUNUP_MIN_WIDTH_M wide that touches the green is the
     run-up. Where it reaches the fairway, the two are redrawn as one shape; otherwise it's
     its own fairway shape (a par 3's approach, or fairway past a band of rough).
-    Holes in `skip` (rough in front of the green) are left alone.
+    Holes in `skip` (rough in front of the green) are left alone. Holes in `greenside_only`
+    ({hole: metres}) have rough between the fairway and a short stretch of fairway at the green:
+    there the run-up is taken only within that distance of the green's centre and is never
+    joined to the main fairway.
     """
     import rasterio
     from rasterio.features import rasterize
@@ -686,28 +692,53 @@ def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = Non
         fm = burn(fws, shape, sub_tf)
         gm = burn([g], shape, sub_tf)
         cand = like[r0:r1, c0:c1] & zone & ~fm & ~gm
-        cand = ndi.binary_closing(cand, iterations=2)  # mends small gaps misclassified pixels leave
+        dbg = debug.setdefault(hole, {"window": (r0, r1, c0, c1), "fm": fm, "gm": gm,
+                                      "like": like[r0:r1, c0:c1] & zone}) if debug is not None else {}
+        # mend the speckle misclassified pixels leave (worst at the collar, where mowing heights mix)
+        mend = _disk(max(1, int(round(RUNUP_MEND_M / px))))
+        cand = ndi.binary_closing(np.pad(cand, mend.shape[0]), mend)[mend.shape[0]:-mend.shape[0], mend.shape[0]:-mend.shape[0]] & zone & ~fm & ~gm
         cand = ndi.binary_opening(cand, iterations=2)  # drops lone speckle
-        lbl, n = ndi.label(cand)
-        # a strip counts only if some of it is wide enough (its core survives the width test);
-        # the whole cleaned shape is then kept, not just that eroded core, so true width isn't lost
-        wide_enough = {i for i in range(1, n + 1) if ndi.binary_erosion(lbl == i, wide).any()}
-        cand = np.isin(lbl, list(wide_enough))
-        near_g = ndi.binary_dilation(gm, iterations=max(1, int(3 / px)))
+        # Only the front of the green: the side facing the fairway's end (or the tee). The mown
+        # surround at the green's sides and back is collar, not run-up.
+        aim = [p for r in fws for p in r if math.dist(p, gc) < RUNUP_FROM_GREEN_M]
+        toward = np.mean(np.asarray(aim, float), axis=0) if aim else (np.asarray(tee, float) if tee is not None else None)
+        front = np.ones(shape, bool)
+        if toward is not None and math.dist(toward, gc) > 1:
+            u = (toward - gc) / math.dist(toward, gc)
+            rr, cc = np.mgrid[0:shape[0], 0:shape[1]]
+            ex = sub_tf.a * (cc + 0.5) + sub_tf.c
+            ny = sub_tf.e * (rr + 0.5) + sub_tf.f
+            front = (ex - gc[0]) * u[0] + (ny - gc[1]) * u[1] > 0
+        cand &= front
+        near_only = (greenside_only or {}).get(hole)
+        if near_only:
+            rr, cc = np.mgrid[0:shape[0], 0:shape[1]]
+            ex = sub_tf.a * (cc + 0.5) + sub_tf.c
+            ny = sub_tf.e * (rr + 0.5) + sub_tf.f
+            cand &= np.hypot(ex - gc[0], ny - gc[1]) <= near_only
+        # Keep only the wide part. Width is judged together with the fairway and green either
+        # side, so a short gap (fairway ending 3 m shy of a wide green) passes, while a thin
+        # strip running off the fairway through rough is cut back to where it's truly wide.
+        dbg["before_width"] = cand.copy() if debug is not None else None
+        cand = ndi.binary_opening(cand | fm | gm, wide) & cand
+        dbg["after_width"] = cand.copy() if debug is not None else None
+        near_g = ndi.binary_dilation(gm, iterations=max(1, int(RUNUP_COLLAR_M / px)))
         lbl, n = ndi.label(cand)
         joins = [i for i in range(1, n + 1) if (near_g & (lbl == i)).any()]
         if not joins:
             continue
         runup = np.isin(lbl, joins)
-        runup |= ndi.binary_dilation(runup, iterations=max(1, int(3 / px))) & near_g & ~gm  # across the collar
-        touched = [r for r in fws if (burn([r], shape, sub_tf)
+        runup |= ndi.binary_dilation(runup, iterations=max(1, int(RUNUP_COLLAR_M / px))) & near_g & ~gm & front  # across the collar
+        touched = [] if near_only else [r for r in fws if (burn([r], shape, sub_tf)
                                        & ndi.binary_dilation(runup, iterations=max(1, int(1.5 / px)))).any()]
         base = burn(touched, shape, sub_tf) if touched else np.zeros(shape, bool)
         merged = base | runup
         merged = (ndi.gaussian_filter(merged.astype(np.float32), RUNUP_ROUND_M / px) > 0.5) | base
-        merged = ndi.binary_fill_holes(merged) & ~ndi.binary_erosion(gm, iterations=max(1, int(1 / px)))
+        merged = ndi.binary_fill_holes(merged & ~gm) & ~gm  # green cut out whole, so no rim is left round it
         added = float((merged & ~fm).sum()) * px * px
-        rings = [r for r in outlines(merged, sub_tf) if len(r) >= 3]
+        dbg["merged"] = merged if debug is not None else None
+        rings = [r for r in outlines(merged, sub_tf) if len(r) >= 3
+                 and abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(r, r[1:] + r[:1]))) / 2 > 60]
         if rings and added > 20:
             out.append({"hole": hole, "rings": rings, "added_m2": round(added), "joins_fairway": bool(touched)})
     return out
@@ -813,7 +844,9 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
         photo_greens.setdefault(g["hole"], []).append(g["ring"])
 
     for f in fairway_runups(img, tf, lab, surfaces, px, photo_greens, back_tees(surfaces, paths["out"] / "holes.json"),
-                            set((cfg.get("layout") or {}).get("rough_in_front_of_green") or [])):
+                            set((cfg.get("layout") or {}).get("rough_in_front_of_green") or []),
+                            greenside_only={int(h): yd * 0.9144 for h, yd in
+                                            ((cfg.get("layout") or {}).get("runup_greenside_only_yd") or {}).items()}):
         for ring in f["rings"]:
             add(ring, {"finding": "fairway_with_runup", "surface": "fairway", "added_m2": f["added_m2"],
                        "joins_fairway": f["joins_fairway"], "source": "aerial photo"},
