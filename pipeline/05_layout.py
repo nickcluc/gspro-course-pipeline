@@ -213,6 +213,31 @@ def apply_photo_greens(surfaces: list[dict], photo_path: Path, project, replace:
     return n
 
 
+def apply_photo_fairways(surfaces: list[dict], photo_path: Path, project, enabled: bool) -> dict:
+    """
+    Swaps Arccos fairways that stop short of the green for Stage 05b's redrawn fairway,
+    which carries the mown run-up on to the green. Returns {hole: m2 added}.
+    """
+    if not enabled or not photo_path.exists():
+        return {}
+    added = {}
+    for f in json.loads(photo_path.read_text()).get("features") or []:
+        p = f["properties"]
+        if p.get("finding") != "fairway_with_runup":
+            continue
+        ll = [tuple(c[:2]) for c in f["geometry"]["coordinates"][0][:-1]]
+        en = [project(x, y) for x, y in ll]
+        old = [s for s in surfaces if s["surface"] == "fairway" and s["hole"] == p["hole"]
+               and s.get("arccos_type") is not None and overlaps(s["en"], en)]
+        if not old:
+            continue
+        for s in old:
+            surfaces.remove(s)
+        surfaces.append(dict(old[0], en=en, lonlat=ll, arccos_name="Fairway (photo, with run-up to the green)"))
+        added[p["hole"]] = added.get(p["hole"], 0) + int(p.get("added_m2") or 0)
+    return added
+
+
 def apply_puttview_greens(surfaces: list[dict], grids_dir: Path, epsg: int, enabled: bool) -> dict:
     """
     Swaps each hole's green for the outline from its PuttView page (Stage 02), placed by
@@ -563,6 +588,8 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     opts = cfg.get("layout") or {}
     photo_greens = apply_photo_greens(surfaces, paths["out"] / "photo_surfaces.geojson", project,
                                       bool(opts.get("greens_from_photo")))
+    runups = apply_photo_fairways(surfaces, paths["out"] / "photo_surfaces.geojson", project,
+                                  bool(opts.get("fairway_runups_from_photo")))
     book_fits = apply_puttview_greens(surfaces, paths["grids"], epsg, opts.get("greens_from_puttview", True))
     photo_stats = apply_photo_bunkers(surfaces, paths["out"] / "photo_surfaces.geojson", project,
                                       bool(opts.get("bunkers_from_photo")), bool(opts.get("drop_bunkers_without_sand")))
@@ -591,7 +618,7 @@ def process_layout(slug: str, top_pins: int = 3) -> dict:
     write_svg(surfaces, frame, out / f"{slug}_surfaces_opcd.svg", f"{cfg.get('name')} from Arccos, EPSG:{epsg}")
 
     result = {"holes": len(hole_rows), "surfaces": len(surfaces), "extra_surfaces": len(extras),
-              "photo_bunkers": photo_stats, "photo_greens": photo_greens, "puttview_greens": len(book_fits), "removed_by_corrections": removed,
+              "photo_bunkers": photo_stats, "photo_greens": photo_greens, "puttview_greens": len(book_fits), "fairway_runups": runups, "removed_by_corrections": removed,
               "framed_to_terrain": bool(spatial),
               "pins": sum(len(h["pins"]) for h in hole_rows)}
     if spatial:
@@ -613,6 +640,9 @@ def main():
         print(f"  Removed {r['removed_by_corrections']} Arccos shapes per extra_surfaces.geojson")
     if r["photo_greens"]:
         print(f"  Arccos greens: {r['photo_greens']} given photo outlines")
+    if r["fairway_runups"]:
+        print(f"  Fairways: run-ups to the green added on {len(r['fairway_runups'])} holes "
+              f"({sum(r['fairway_runups'].values())} m2)")
     if r["puttview_greens"]:
         print(f"  Greens: {r['puttview_greens']} shaped from the PuttView pages (fits in holes.json)")
     if any(r["photo_bunkers"].values()):

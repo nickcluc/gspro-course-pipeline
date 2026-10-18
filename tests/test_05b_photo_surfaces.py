@@ -212,6 +212,28 @@ class TestProcess:
         assert kept[real].mean() > 0.95
         assert kept[shadow].mean() < 0.25 and not kept[roof].any()  # slivers left go in the clean-up after
 
+    def test_fairway_runup_joins_the_green(self):
+        # Arccos fairway stops 15 m short of the green; the photo shows mown grass all the way
+        import rasterio
+        rng = np.random.default_rng(6)
+        img = np.zeros((4, 400, 400), np.float32)
+        img[:] = np.array((122, 136, 99, 180), np.float32)[:, None, None]       # rough
+        img += rng.normal(0, 6, img.shape).astype(np.float32)                  # rough is patchy
+        mown = np.array((132, 150, 108, 199), np.float32)[:, None, None]
+        img[:, 40:360, 160:240] = mown + rng.normal(0, 1.5, (4, 320, 80)).astype(np.float32)  # fairway + run-up
+        tf = rasterio.transform.from_origin(E0, N0, PX, PX)
+        en = lambda c, r: (E0 + c * PX, N0 - r * PX)  # noqa: E731
+        fairway = ([en(160 + c, 120) for c in range(0, 80, 10)] + [en(240, 120 + r) for r in range(0, 180, 10)]
+                   + [en(240 - c, 300) for c in range(0, 80, 10)] + [en(160, 300 - r) for r in range(0, 180, 10)])  # rows 120-300
+        green = [en(170, 350), en(230, 350), en(230, 395), en(170, 395)]     # rows 350-395, the run-up is 300-350
+        surfaces = [{"hole": 1, "surface": "fairway", "en": fairway}, {"hole": 1, "surface": "green", "en": green}]
+        lab = np.zeros((400, 400), np.uint8)
+        out = photo.fairway_runups(img, tf, lab, surfaces, PX)
+        assert len(out) == 1 and out[0]["added_m2"] > 0.8 * 15 * 24  # most of the 15 m x 24 m gap
+        ring = max(out[0]["rings"], key=len)
+        rows = [(N0 - n) / PX for _, n in ring]
+        assert max(rows) > 345 and min(rows) < 125  # one shape, from the fairway's top to the green
+
     def test_photo_outlines_replace_and_drop(self, course):
         photo.process("test", overlays=False)
         cfg = json.loads((course / "course.json").read_text())

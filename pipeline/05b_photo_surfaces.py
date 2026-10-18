@@ -576,6 +576,105 @@ def green_outlines(img, tf, lab, surfaces, px) -> list[dict]:
     return out
 
 
+
+# ---------------------------------------------------------------------------
+# Fairway run-ups
+# ---------------------------------------------------------------------------
+
+RUNUP_FROM_GREEN_M = 70.0  # fairway this close to the green marks out where a run-up can be
+RUNUP_PAD_M = 4.0
+RUNUP_ROUND_M = 1.0        # blur that smooths the joined fairway's edge
+
+
+def fairway_features(img: np.ndarray) -> np.ndarray:
+    """Smoothed colour bands plus texture: mown fairway is even and fine; rough is patchier."""
+    bright = img[:3].mean(0)
+    tex = np.sqrt(np.maximum(ndi.uniform_filter(bright ** 2, 7) - ndi.uniform_filter(bright, 7) ** 2, 0))
+    return np.stack([ndi.uniform_filter(img[i], 7) for i in range(4)] + [ndi.uniform_filter(tex, 7)])
+
+
+def fairway_runups(img, tf, lab, surfaces, px, greens_by_hole: dict | None = None) -> list[dict]:
+    """
+    Arccos often stops a fairway short of the green when the mown run-up carries on to it.
+    What fairway looks like is learned from inside Arccos's fairways. Between each fairway's
+    green end and the green, fairway-looking grass that joins the two is added, and the
+    fairway is redrawn as one smoothed shape. Returns, per hole, the new outline(s).
+    """
+    import rasterio
+    from rasterio.features import rasterize
+    from scipy.spatial import ConvexHull
+
+    H, W = lab.shape
+    def burn(rings, shape=(H, W), transform=tf):
+        geoms = [({"type": "Polygon", "coordinates": [list(r) + [r[0]]]}, 1) for r in rings if len(r) >= 3]
+        return rasterize(geoms, out_shape=shape, transform=transform, fill=0, dtype="uint8") > 0 if geoms \
+            else np.zeros(shape, bool)
+
+    fairways = [s for s in surfaces if s["surface"] == "fairway"]
+    if not fairways:
+        return []
+    fw_all = burn([s["en"] for s in fairways])
+    inside = ndi.binary_erosion(fw_all, iterations=max(1, int(3 / px)))
+    if inside.sum() < 500:
+        return []
+    F = fairway_features(img)
+    X = F[:, inside].T[:: max(1, int(inside.sum() // 200000))]
+    mu, cov = X.mean(0), np.cov(X.T) + np.eye(F.shape[0])
+    d2 = -2 * _gauss_loglik(F, mu, cov) - float(np.linalg.slogdet(cov)[1])
+    like = (d2 < float(np.percentile(d2[inside], 95))) & ~np.isin(lab, [LABELS["sand"], LABELS["trees"], LABELS["water"]])
+    tees = burn([s["en"] for s in surfaces if s["surface"] == "tee"])
+    like &= ~tees
+    inv = ~tf
+    out = []
+    for hole in sorted({s["hole"] for s in fairways}):
+        fws = [s["en"] for s in fairways if s["hole"] == hole]
+        greens = (greens_by_hole or {}).get(hole) or [s["en"] for s in surfaces
+                                                         if s["surface"] == "green" and s["hole"] == hole]
+        if not greens:
+            continue
+        g = max(greens, key=len)
+        gc = np.mean(np.asarray(g, float), axis=0)
+        near = [p for r in fws for p in r if math.dist(p, gc) < RUNUP_FROM_GREEN_M]
+        pts = np.array(near + list(g), float)
+        if len(near) < 3:
+            continue
+        # the window holds the whole fairway, so the redrawn outline is the whole fairway
+        cols = np.array([inv @ tuple(p) for p in list(pts) + [q for r in fws for q in r]])
+        pad = int((RUNUP_PAD_M + 10) / px)
+        c0, r0 = np.maximum((cols.min(0) - pad).astype(int), 0)
+        c1, r1 = (cols.max(0) + pad).astype(int)
+        c1, r1 = min(c1, W), min(r1, H)
+        sub_tf = tf @ rasterio.Affine.translation(c0, r0)
+        shape = (r1 - r0, c1 - c0)
+        hull = pts[ConvexHull(pts).vertices]
+        zone = ndi.binary_dilation(burn([hull], shape, sub_tf), iterations=max(1, int(RUNUP_PAD_M / px)))
+        fm = burn(fws, shape, sub_tf)
+        gm = burn([g], shape, sub_tf)
+        cand = ndi.binary_opening(like[r0:r1, c0:c1] & zone & ~fm & ~gm, iterations=3)
+        lbl, n = ndi.label(cand)
+        if not n:
+            continue
+        near_f = ndi.binary_dilation(fm, iterations=max(1, int(1 / px)))
+        near_g = ndi.binary_dilation(gm, iterations=max(1, int(3 / px)))
+        joins = [i for i in range(1, n + 1) if (near_f & (lbl == i)).any() and (near_g & (lbl == i)).any()]
+        if not joins:
+            continue
+        runup = np.isin(lbl, joins)
+        # join the run-up to the green across the collar, and smooth the whole fairway end
+        merged = fm | runup | (ndi.binary_dilation(runup, iterations=max(1, int(3 / px))) & near_g & ~gm)
+        merged = (ndi.gaussian_filter(merged.astype(np.float32), RUNUP_ROUND_M / px) > 0.5) | fm
+        merged = ndi.binary_fill_holes(merged) & ~ndi.binary_erosion(gm, iterations=max(1, int(1 / px)))
+        added = float((merged & ~fm).sum()) * px * px
+        rings = [r for r in outlines(merged, sub_tf) if len(r) >= 3]
+        # only redraw the fairway pieces the run-up touches; others stay as Arccos drew them
+        touched = []
+        for r in fws:
+            m = burn([r], shape, sub_tf)
+            if (m & ndi.binary_dilation(runup, iterations=max(1, int(1.5 / px)))).any():
+                touched.append(r)
+        out.append({"hole": hole, "rings": rings, "added_m2": round(added), "replaces": touched})
+    return out
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -609,8 +708,8 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
 
     feats, per_hole = [], {}
 
-    def add(ring, props):
-        hole = nearest_hole(ring, centres)
+    def add(ring, props, hole=None):
+        hole = hole or nearest_hole(ring, centres)
         props = dict(props, hole=hole)
         per_hole.setdefault(hole, {}).setdefault(props["finding"], 0)
         per_hole[hole][props["finding"]] += 1
@@ -670,9 +769,16 @@ def process(slug: str, write_extras: bool = False, overlays: bool = True) -> dic
                 add(ring, {"finding": "trees_missing_from_arccos", "surface": "trees", "area_m2": round(area, 1),
                            "source": "aerial photo"})
 
+    photo_greens = {}
     for g in green_outlines(img, tf, lab, surfaces, px):
         add(g["ring"], {"finding": "green_from_photo", "surface": "green", "arccos_m2": g["arccos_m2"],
                         "photo_m2": g["photo_m2"], "source": "aerial photo"})
+        photo_greens.setdefault(g["hole"], []).append(g["ring"])
+
+    for f in fairway_runups(img, tf, lab, surfaces, px, photo_greens):
+        for ring in f["rings"]:
+            add(ring, {"finding": "fairway_with_runup", "surface": "fairway", "added_m2": f["added_m2"],
+                       "source": "aerial photo"}, hole=f["hole"])  # the fairway's own hole, not the nearest
 
     native, native_lim = native_mask(img, lab, px)
     for ring in outlines(native > 0, tf):
@@ -718,7 +824,8 @@ def draw_overlays(img, tf, surfaces, feats, epsg, out_dir: Path, max_px: int = 1
     rgb = np.clip(np.moveaxis(img[:3], 0, -1), 0, 255).astype(np.uint8)
     colours = {"bunker_matches_arccos": (0, 220, 0), "bunker_missing_from_arccos": (255, 30, 30),
                "arccos_bunker_no_sand_seen": (255, 140, 0), "native_grass": (170, 60, 240),
-               "trees_missing_from_arccos": (0, 90, 255), "green_from_photo": (255, 0, 255)}
+               "trees_missing_from_arccos": (0, 90, 255), "green_from_photo": (255, 0, 255),
+               "fairway_with_runup": (0, 230, 255)}
     edge = {"green": (40, 120, 255), "fairway": (255, 255, 255), "tee": (255, 0, 255), "bunker": (255, 230, 0)}
     for hole in sorted({s["hole"] for s in surfaces}):
         mine = [s for s in surfaces if s["hole"] == hole and s["surface"] in edge]
@@ -735,8 +842,8 @@ def draw_overlays(img, tf, surfaces, feats, epsg, out_dir: Path, max_px: int = 1
         to_px = lambda e, n: ((inv @ (e, n))[0] - c0, (inv @ (e, n))[1] - r0)  # noqa: E731
         for f in feats:
             ring = [to_px(*to_en.transform(x, y)) for x, y in f["geometry"]["coordinates"][0]]
-            if f["properties"]["finding"] == "green_from_photo":
-                d.line(ring, fill=colours["green_from_photo"] + (255,), width=3)  # outline only, so the green shows
+            if f["properties"]["finding"] in ("green_from_photo", "fairway_with_runup"):
+                d.line(ring, fill=colours[f["properties"]["finding"]] + (255,), width=3)  # outline only
             else:
                 d.polygon(ring, fill=colours[f["properties"]["finding"]] + (120,))
         for s in mine:

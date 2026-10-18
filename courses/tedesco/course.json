@@ -29,6 +29,7 @@
   "layout": {
     "bunkers_from_photo": true,
     "greens_from_photo": true,
+    "fairway_runups_from_photo": true,
     "drop_bunkers_without_sand": false
   }
 }

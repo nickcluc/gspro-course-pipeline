@@ -28,11 +28,12 @@ Run it after Stage 01 for the best result. Without the terrain, the SVG is frame
 ### Options (`course.json`)
 
 ```json
-"layout": {"bunkers_from_photo": true, "greens_from_photo": true, "drop_bunkers_without_sand": false}
+"layout": {"bunkers_from_photo": true, "greens_from_photo": true, "fairway_runups_from_photo": true, "drop_bunkers_without_sand": false}
 ```
 
 - `bunkers_from_photo`: replace each Arccos bunker with Stage 05b's photo outline of the same sand, which is usually more accurate. Tedesco: 39 replaced.
 - `greens_from_photo`: replace each Arccos green with Stage 05b's photo outline. Arccos greens are drawn 1–3 m inside the real edge; Tedesco's are on average 1.5 times bigger in the photo.
+- `fairway_runups_from_photo`: replace each Arccos fairway that stops short of its green with Stage 05b's redrawn fairway, which carries the mown run-up on to the green. Tedesco: 12 holes.
 - `greens_from_puttview` (on by default): when Stage 02 has read a hole's PuttView page, that page's green outline becomes the green. It's turned, flipped if the page is mirrored, and nudged until it best overlaps the map's green (the photo outline when `greens_from_photo` is on); its shape and size come from the book. The placement goes in `holes.json` as `green.puttview_fit`, with `iou` (0 to 1) for how well it matched, and Stage 06 places the PuttView green mesh the same way.
 - `drop_bunkers_without_sand`: remove Arccos bunkers where Stage 05b saw only grass. Off for Tedesco until the 14 are checked.
 

@@ -14,6 +14,7 @@ Checks the Arccos map against the NAIP aerial photo from Stage 03, which has red
 | `bunker_matches_arccos` | Sand matching an Arccos bunker; its photo outline is usually more accurate than Arccos's | green |
 | `arccos_bunker_no_sand_seen` | An Arccos bunker with grass in the photo: grassed over or misplaced | orange |
 | `green_from_photo` | The green's real edge, for every Arccos green | pink outline |
+| `fairway_with_runup` | A fairway redrawn to carry its mown run-up on to the green | cyan outline |
 | `native_grass` | Brown, dry long-grass areas, which Arccos doesn't map | purple |
 | `trees_missing_from_arccos` | Woods near the holes that Arccos doesn't map | blue |
 
@@ -62,6 +63,12 @@ Arccos draws greens as rounded blobs 1–3 m inside the real edge. A green is sm
 
 Arccos's own middle always stays in. Turn on `greens_from_photo` in `course.json` to use these outlines in Stage 05.
 
+### Fairway run-ups
+
+Arccos often stops a fairway short of the green even when the mown grass carries on to it. What fairway looks like (colour and smoothness) is learned from inside Arccos's fairways. For each hole, the stage looks between the fairway's green end (the part within 70 m of the green) and the green. Fairway-looking grass there that touches both is the run-up. It's joined to the fairway, the joined edge is smoothed, and the whole fairway is written as one shape. Holes where rough, water or trees sit between fairway and green get nothing added.
+
+Turn on `fairway_runups_from_photo` in `course.json` to use these fairways in Stage 05.
+
 ### Trees
 
 Arccos maps only some of the woods. Tree pixels are told apart from turf and rough by three models learned from the course: the Arccos tree areas, the fairways, and a rough strip 2–8 m outside the fairways. Each model uses brightness, plant signal, near-infrared and texture (trees are darker and patchier than grass). Each pixel goes to the closest model. The result is cleaned up, gaps under 50 m² are filled, and anything already mapped as turf, sand or water is left out. Only woods within 60 m of turf are kept. An area must be at least 30 m² (a single tree about 6 m across); under 100 m² it must also stand 4 m clear of Arccos's trees, because next to them it's only the edge of a crown Arccos already has. Large areas are cut into 60 m tiles so each piece stays a simple shape.
@@ -88,6 +95,7 @@ This is less reliable than the bunker check. Summer photos make native grass loo
 - 14 Arccos bunkers with no sand seen (for example 3 on hole 14, where the photo shows grass)
 - 27 native grass areas, about 13,000 m²
 - 18 greens, 1.1 to 2.2 times the Arccos size (average 1.5); hole 16's is 436 m² against Arccos's 268 m²
+- Run-ups added on 12 holes (1, 2, 4, 6, 9, 10, 11, 14, 15, 16, 17, 18), about 7,800 m² in all; none on 5 (water) or 12 (rough and trees)
 - 231 tree areas Arccos doesn't map: 151 on the back nine (29 on hole 16), 80 on the front, where Arccos already maps most single trees
 - 12,200 m² of tree shadow and 182 roof or paving patches taken out of the tree areas
 - Runs in about 2½ minutes
